@@ -104,8 +104,9 @@ Both arms draw from the same distribution, so every rejection is a false positiv
 - **Snapshot store** — monotonic versions, bounded history for `Last-Event-ID` resumption, ETag conditional GET.
 - **Control plane** — Postgres schema and migration runner, hashed API keys with indexed-prefix lookup, a ruleset compiler that rejects invalid publishes rather than shipping them, publish transaction with per-environment version locking, append-only audit log, and an SDK snapshot endpoint that picks the payload from the authenticated key kind.
 - **Exposure pipeline** — adaptive sampling, hard-bounded queues, non-blocking recording.
+- **Console rule builder** — a recursive component tree mirroring the rule tree, with the server payload, client payload, and a live evaluation shown side by side so filtering behaviour is visible rather than assumed.
 
-**Not started** — the console UI, the Java SDK, and the ClickHouse ingest sink.
+**Not started** — the Java SDK and the ClickHouse ingest sink. The console covers the rule builder; flag list and experiment-results views are not built.
 
 Integration tests run against a real Postgres and skip cleanly when one is not reachable, so `npm test` stays green without Docker.
 
