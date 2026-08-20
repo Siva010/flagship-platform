@@ -51,6 +51,9 @@ jobs:
         with:
           go-version: '1.23'
       - run: npm ci
+      # The conformance runner imports @flagship/core through its package entry
+      # point, so the workspace must be built first.
+      - run: npm run build
       - name: TypeScript SDK
         run: npm run conformance
       - name: Go SDK

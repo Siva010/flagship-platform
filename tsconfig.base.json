@@ -11,6 +11,10 @@
     "noImplicitOverride": true,
     "isolatedModules": true,
     "verbatimModuleSyntax": true,
+    // Source imports carry .ts so `node --test` can run files directly;
+    // tsc rewrites them to .js on emit.
+    "allowImportingTsExtensions": true,
+    "rewriteRelativeImportExtensions": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "declaration": true,
