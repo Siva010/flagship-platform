@@ -95,7 +95,7 @@ Both arms draw from the same distribution, so every rejection is a false positiv
 
 **Done** — 144 tests, plus the Go suite under `-race`:
 
-- **Deterministic bucketing** — MurmurHash3, validated against published smhasher vectors rather than only against itself, with a 500-case fixture run against both the TypeScript and Go implementations.
+- **Deterministic bucketing** — MurmurHash3 in **TypeScript, Go, and Java**, each validated against published smhasher vectors rather than only against our own fixture, and all three gated in CI against the same 500 cases. The fixture deliberately carries multi-byte UTF-8, astral-plane characters, and every tail length, because those are what separate a correct port from one that merely agrees on ASCII.
 - **Rule evaluation** — nested AND/OR/NOT, reusable segments, flag prerequisites, percentage rollouts. Both recursive structures are cycle-guarded; a malformed ruleset fails closed instead of overflowing the stack inside a customer's request path.
 - **In-process SDK evaluation** — never throws, never performs I/O, degrades to the caller's fallback when no ruleset has loaded.
 - **Payload filtering by key type** — a rule containing any server-only node is dropped whole rather than rewritten, because stripping a node out of an AND makes it *more* permissive.
@@ -104,9 +104,10 @@ Both arms draw from the same distribution, so every rejection is a false positiv
 - **Snapshot store** — monotonic versions, bounded history for `Last-Event-ID` resumption, ETag conditional GET.
 - **Control plane** — Postgres schema and migration runner, hashed API keys with indexed-prefix lookup, a ruleset compiler that rejects invalid publishes rather than shipping them, publish transaction with per-environment version locking, append-only audit log, and an SDK snapshot endpoint that picks the payload from the authenticated key kind.
 - **Exposure pipeline** — adaptive sampling, hard-bounded queues, non-blocking recording.
-- **Console rule builder** — a recursive component tree mirroring the rule tree, with the server payload, client payload, and a live evaluation shown side by side so filtering behaviour is visible rather than assumed.
+- **Console** — a recursive rule builder showing the server payload, client payload, and a live evaluation side by side, plus an experiment results view plotting confidence intervals over time. On its default A/A scenario the fixed-horizon interval excludes zero at 17,000 users and then returns to non-significance; the always-valid band never crosses.
+- **Publish authentication** — the data-plane ingress is gated by a service token compared in constant time, and fails closed: no token configured disables the endpoint rather than leaving it open.
 
-**Not started** — the Java SDK and the ClickHouse ingest sink. The console covers the rule builder; flag list and experiment-results views are not built.
+**Not started** — the ClickHouse exposure sink, and a console flag-list view.
 
 Integration tests run against a real Postgres and skip cleanly when one is not reachable, so `npm test` stays green without Docker.
 
@@ -115,6 +116,7 @@ Integration tests run against a real Postgres and skip cleanly when one is not r
 ```bash
 npm run build          # all workspaces
 npm test               # 144 tests (15 need infra:up)
+cd sdks/java && javac -encoding UTF-8 -d out $(find src test -name "*.java") && java -cp out com.flagship.sdk.ConformanceTest
 npm run conformance    # 500-case cross-language fixture
 npm run bench          # evaluation latency
 npm run aa:simulate    # the A/A false-positive measurement
