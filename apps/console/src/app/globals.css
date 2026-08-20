@@ -283,3 +283,77 @@ textarea {
   margin: 0;
   color: var(--text-dim);
 }
+
+/* --- Interval chart ----------------------------------------------------- */
+
+.chart {
+  margin: 0;
+}
+
+.chart svg {
+  display: block;
+  max-width: 100%;
+  overflow: visible;
+}
+
+.chart__zero {
+  stroke: var(--text-dim);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+}
+
+.chart__tick {
+  fill: var(--text-dim);
+  font-size: 11px;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+
+.chart__legend {
+  display: flex;
+  gap: 1.5rem;
+  flex-wrap: wrap;
+  margin-top: 0.75rem;
+  font-size: 0.85rem;
+  color: var(--text-dim);
+}
+
+.chart__legend-item {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.chart__swatch {
+  width: 0.75rem;
+  height: 0.75rem;
+  border-radius: 2px;
+  display: inline-block;
+}
+
+.chart__note {
+  color: var(--text-dim);
+  margin: 1rem 0 0;
+}
+
+.notice--warn {
+  border-left-color: var(--danger);
+}
+
+nav.tabs {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1.5rem;
+}
+
+nav.tabs a {
+  color: var(--text-dim);
+  text-decoration: none;
+  padding: 0.4rem 0.8rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+nav.tabs a:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}

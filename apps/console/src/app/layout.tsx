@@ -15,7 +15,15 @@ export const viewport: Viewport = {
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en">
-      <body>{children}</body>
+      <body>
+        <div className="page">
+          <nav className="tabs">
+            <a href="/">Rule builder</a>
+            <a href="/experiments">Experiment results</a>
+          </nav>
+        </div>
+        {children}
+      </body>
     </html>
   );
 }
