@@ -11,17 +11,26 @@ concurrency:
 
 jobs:
   node:
-    name: Node (control plane, console, SDK)
+    name: Node ${{ matrix.node }}
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 22 is the floor the package manifests claim; 24 is what development
+        # happens on. Testing both keeps the claimed floor honest rather than
+        # aspirational — type stripping in particular differs between them.
+        node: ['22', '24']
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: ${{ matrix.node }}
           cache: npm
       - run: npm ci
       - run: npm run build
       - run: npm run typecheck
+      # Integration tests requiring Postgres or ClickHouse skip themselves when
+      # unreachable, so this stays meaningful without services in CI.
       - run: npm test
 
   go:
@@ -32,10 +41,32 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.23'
-      - run: go vet ./...
+
+      - name: Check formatting
+        run: |
+          unformatted=$(gofmt -l apps/data-plane sdks/go)
+          if [ -n "$unformatted" ]; then
+            echo "These files are not gofmt-formatted:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: Vet data plane
+        run: go vet ./...
         working-directory: apps/data-plane
-      - run: go test ./...
+      - name: Vet Go SDK
+        run: go vet ./...
+        working-directory: sdks/go
+
+      # -race is not optional here. The hub is a sharded concurrent registry
+      # broadcasting to thousands of subscribers; without the race detector its
+      # tests prove far less than they appear to.
+      - name: Test data plane
+        run: go test ./... -race
         working-directory: apps/data-plane
+      - name: Test Go SDK
+        run: go test ./... -race
+        working-directory: sdks/go
 
   conformance:
     name: Cross-language bucketing conformance
@@ -54,8 +85,23 @@ jobs:
       # The conformance runner imports @flagship/core through its package entry
       # point, so the workspace must be built first.
       - run: npm run build
+
       - name: TypeScript SDK
         run: npm run conformance
       - name: Go SDK
         run: go test ./... -run Conformance
         working-directory: sdks/go
+
+      # The fixture is generated from the TypeScript reference. If regenerating
+      # it produces a diff, someone changed the hash without updating the
+      # fixture — or updated the fixture to paper over a real divergence. Both
+      # are worth failing the build for, since the fixture is the contract every
+      # SDK is checked against.
+      - name: Fixture is reproducible
+        run: |
+          npm run fixture:generate
+          if ! git diff --quiet -- spec/conformance/bucketing.json; then
+            echo "Regenerating the conformance fixture produced a diff."
+            git diff -- spec/conformance/bucketing.json | head -50
+            exit 1
+          fi
