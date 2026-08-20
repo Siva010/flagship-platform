@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  node:
+    name: Node (control plane, console, SDK)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npm run typecheck
+      - run: npm test
+
+  go:
+    name: Go (data plane, SDK)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+      - run: go vet ./...
+        working-directory: apps/data-plane
+      - run: go test ./...
+        working-directory: apps/data-plane
+
+  conformance:
+    name: Cross-language bucketing conformance
+    runs-on: ubuntu-latest
+    needs: [node, go]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+      - run: npm ci
+      - name: TypeScript SDK
+        run: npm run conformance
+      - name: Go SDK
+        run: go test ./... -run Conformance
+        working-directory: sdks/go

@@ -1,0 +1,30 @@
+node_modules/
+dist/
+build/
+.next/
+out/
+coverage/
+*.tsbuildinfo
+
+# Go
+bin/
+*.exe
+*.test
+
+# Java
+target/
+.gradle/
+
+# env / secrets
+.env
+.env.*
+!.env.example
+
+# editors / os
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# local data
+infra/data/
