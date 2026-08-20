@@ -20,7 +20,8 @@
     "fixture:generate": "npm run fixture:generate --workspace packages/core",
     "bench": "npm run bench --workspace packages/sdk-js",
     "infra:up": "docker compose -f infra/docker-compose.yml up -d",
-    "infra:down": "docker compose -f infra/docker-compose.yml down"
+    "infra:down": "docker compose -f infra/docker-compose.yml down",
+    "aa:simulate": "npm run aa:simulate --workspace packages/core"
   },
   "devDependencies": {
     "typescript": "^5.7.2"

@@ -4,3 +4,4 @@ export * from './bucketing.ts';
 export * from './operators.ts';
 export * from './evaluate.ts';
 export * from './visibility.ts';
+export * from './stats/index.ts';
