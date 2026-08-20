@@ -91,7 +91,7 @@ The first benchmark read ~2000 ns/op. Three hot-path allocations were responsibl
 
 Both arms draw from the same distribution, so every rejection is a false positive. The middle row is what most teams actually do.
 
-**SSE fan-out** (, see [LOADTEST.md](apps/data-plane/LOADTEST.md)) — i5-8600K (6 cores), Windows 11, load generator co-located with the server:
+**SSE fan-out** (see [LOADTEST.md](apps/data-plane/LOADTEST.md)) — i5-8600K (6 cores), Windows 11, load generator co-located with the server:
 
 | Measurement | Result |
 |---|---|
