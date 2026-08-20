@@ -93,19 +93,31 @@ Both arms draw from the same distribution, so every rejection is a false positiv
 
 ## Status
 
-Core is implemented and tested; the distributed system around it is not.
+**Done** — 129 tests, plus the Go suite under `-race`:
 
-**Done** — deterministic bucketing with cross-language conformance (500 cases, TypeScript + Go), the rule evaluation engine, in-process SDK evaluation, payload filtering by key type, and the statistics engine.
+- **Deterministic bucketing** — MurmurHash3, validated against published smhasher vectors rather than only against itself, with a 500-case fixture run against both the TypeScript and Go implementations.
+- **Rule evaluation** — nested AND/OR/NOT, reusable segments, flag prerequisites, percentage rollouts. Both recursive structures are cycle-guarded; a malformed ruleset fails closed instead of overflowing the stack inside a customer's request path.
+- **In-process SDK evaluation** — never throws, never performs I/O, degrades to the caller's fallback when no ruleset has loaded.
+- **Payload filtering by key type** — a rule containing any server-only node is dropped whole rather than rewritten, because stripping a node out of an AND makes it *more* permissive.
+- **Statistics** — Welch's t-test, two-proportion z-test, mSPRT, SRM detection, MDE calculator.
+- **SSE fan-out** — sharded registry, bounded per-connection buffers, slow-consumer eviction. 117 µs to broadcast to 1000 subscribers.
+- **Snapshot store** — monotonic versions, bounded history for `Last-Event-ID` resumption, ETag conditional GET.
+- **Control plane** — Postgres schema, hashed API keys with indexed-prefix lookup, and a ruleset compiler that rejects invalid publishes rather than shipping them.
+- **Exposure pipeline** — adaptive sampling, hard-bounded queues, non-blocking recording.
 
-**Not started** — SSE streaming and the data-plane fan-out, exposure event ingest, the control-plane API and Postgres schema, the console UI, and the Java SDK.
+**Not started** — the console UI, the Java SDK, control-plane HTTP routes wired to Postgres, and the ClickHouse ingest sink.
 
 ## Commands
 
 ```bash
 npm run build          # all workspaces
-npm test               # 92 tests
+npm test               # 129 tests
 npm run conformance    # 500-case cross-language fixture
 npm run bench          # evaluation latency
 npm run aa:simulate    # the A/A false-positive measurement
 npm run infra:up       # Postgres, Redis, ClickHouse
+```
+
+```bash
+cd apps/data-plane && go test ./... -race
 ```
