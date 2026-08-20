@@ -116,13 +116,22 @@ Integration tests run against a real Postgres and skip cleanly when one is not r
 ```bash
 npm run build          # all workspaces
 npm test               # 144 tests (15 need infra:up)
-cd sdks/java && javac -encoding UTF-8 -d out $(find src test -name "*.java") && java -cp out com.flagship.sdk.ConformanceTest
-npm run conformance    # 500-case cross-language fixture
+npm run conformance    # 500-case fixture, TypeScript SDK
 npm run bench          # evaluation latency
 npm run aa:simulate    # the A/A false-positive measurement
 npm run infra:up       # Postgres (host port 5433), Redis, ClickHouse
 ```
 
+The Go and Java SDKs check the same fixture. CI runs all three.
+
 ```bash
 cd apps/data-plane && go test ./... -race
+```
+
+```bash
+cd sdks/go && go test ./... -run Conformance
+```
+
+```bash
+cd sdks/java && javac -encoding UTF-8 -d out $(find src test -name '*.java') && java -cp out com.flagship.sdk.ConformanceTest
 ```
