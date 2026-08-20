@@ -8,6 +8,26 @@ sequential testing rather than fixed-horizon p-values you peek at.
 
 Design reasoning for the non-obvious parts is in [docs/DESIGN-DECISIONS.md](docs/DESIGN-DECISIONS.md).
 
+## Highlights
+
+- **Always-valid sequential testing (mSPRT)** and chi-square sample-ratio-mismatch
+  detection. Across **1,000 simulated A/A experiments** checked at 39 interim points, the
+  false-positive rate held at **1.0%** where naive fixed-horizon peeking produced
+  **27.4%**. → [reproduce](#measured-results)
+- **In-process SDK evaluation at 241–827 ns/eval** (200 flags × 5 rules, zero network
+  I/O), with identical bucketing across **TypeScript, Go, and Java** enforced by a
+  500-case conformance fixture gated in CI. → [reproduce](#measured-results)
+- **4,305 concurrent SSE connections at ~18 KB heap each**, held by a sharded connection
+  registry with bounded per-connection buffers and slow-consumer eviction — **zero
+  evictions** under load. → [method and limits](apps/data-plane/LOADTEST.md)
+- Evaluation latency cut **~2,000 ns → 716 ns** by profiling out three hot-path
+  allocations: a per-hash encoder allocation, a per-rule set allocation, and a linear
+  variation lookup. None of them was the hash.
+
+Every figure above is reproducible with a single command and stated with its test
+conditions. Where a measurement has limits — the connection ceiling is the load
+generator's, not the server's — those are recorded alongside it rather than omitted.
+
 ## The hard parts
 
 - **In-process evaluation.** A flag is checked hundreds of times per request. It cannot
