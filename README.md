@@ -91,6 +91,18 @@ The first benchmark read ~2000 ns/op. Three hot-path allocations were responsibl
 
 Both arms draw from the same distribution, so every rejection is a false positive. The middle row is what most teams actually do.
 
+**SSE fan-out** (, see [LOADTEST.md](apps/data-plane/LOADTEST.md)) — i5-8600K (6 cores), Windows 11, load generator co-located with the server:
+
+| Measurement | Result |
+|---|---|
+| Concurrent SSE connections held | 4,305 |
+| Heap per connection | ~18.1 KB |
+| Slow-consumer evictions under load | 0 |
+| Propagation p50, single connection | 1.6 ms |
+| Broadcast fan-out to 1,000 subscribers | 117 µs |
+
+Heap per connection came out at 18,184 / 18,105 / 18,178 bytes at 500 / 2,000 / 4,305 connections — that consistency is why it is the number worth quoting. The 4,305 ceiling is the *load generator's* limit, not the server's: 695 of 5,000 connections failed on the client during the ramp while the server logged no errors and reported all 4,305 connected. Latency above a few hundred connections is inflated by co-location and by Windows' ~15.6 ms timer granularity, so treat it as an upper bound rather than a server property.
+
 ## Status
 
 **Done** — 166 tests with all services up, plus the Go suite under `-race` and a Java conformance run:
