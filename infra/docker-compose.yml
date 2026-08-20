@@ -8,7 +8,11 @@ services:
       POSTGRES_PASSWORD: flagship
       POSTGRES_DB: flagship
     ports:
-      - '5432:5432'
+      # 5433 on the host, not 5432. A natively installed PostgreSQL is common on
+      # developer machines and silently wins the binding, so connections land on
+      # the wrong server and fail authentication in a way that looks like a
+      # credentials bug rather than a port conflict.
+      - '5433:5432'
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:

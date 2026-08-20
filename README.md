@@ -93,7 +93,7 @@ Both arms draw from the same distribution, so every rejection is a false positiv
 
 ## Status
 
-**Done** — 129 tests, plus the Go suite under `-race`:
+**Done** — 144 tests, plus the Go suite under `-race`:
 
 - **Deterministic bucketing** — MurmurHash3, validated against published smhasher vectors rather than only against itself, with a 500-case fixture run against both the TypeScript and Go implementations.
 - **Rule evaluation** — nested AND/OR/NOT, reusable segments, flag prerequisites, percentage rollouts. Both recursive structures are cycle-guarded; a malformed ruleset fails closed instead of overflowing the stack inside a customer's request path.
@@ -102,20 +102,22 @@ Both arms draw from the same distribution, so every rejection is a false positiv
 - **Statistics** — Welch's t-test, two-proportion z-test, mSPRT, SRM detection, MDE calculator.
 - **SSE fan-out** — sharded registry, bounded per-connection buffers, slow-consumer eviction. 117 µs to broadcast to 1000 subscribers.
 - **Snapshot store** — monotonic versions, bounded history for `Last-Event-ID` resumption, ETag conditional GET.
-- **Control plane** — Postgres schema, hashed API keys with indexed-prefix lookup, and a ruleset compiler that rejects invalid publishes rather than shipping them.
+- **Control plane** — Postgres schema and migration runner, hashed API keys with indexed-prefix lookup, a ruleset compiler that rejects invalid publishes rather than shipping them, publish transaction with per-environment version locking, append-only audit log, and an SDK snapshot endpoint that picks the payload from the authenticated key kind.
 - **Exposure pipeline** — adaptive sampling, hard-bounded queues, non-blocking recording.
 
-**Not started** — the console UI, the Java SDK, control-plane HTTP routes wired to Postgres, and the ClickHouse ingest sink.
+**Not started** — the console UI, the Java SDK, and the ClickHouse ingest sink.
+
+Integration tests run against a real Postgres and skip cleanly when one is not reachable, so `npm test` stays green without Docker.
 
 ## Commands
 
 ```bash
 npm run build          # all workspaces
-npm test               # 129 tests
+npm test               # 144 tests (15 need infra:up)
 npm run conformance    # 500-case cross-language fixture
 npm run bench          # evaluation latency
 npm run aa:simulate    # the A/A false-positive measurement
-npm run infra:up       # Postgres, Redis, ClickHouse
+npm run infra:up       # Postgres (host port 5433), Redis, ClickHouse
 ```
 
 ```bash
