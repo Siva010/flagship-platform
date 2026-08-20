@@ -81,6 +81,10 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.23'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
       - run: npm ci
       # The conformance runner imports @flagship/core through its package entry
       # point, so the workspace must be built first.
@@ -91,6 +95,14 @@ jobs:
       - name: Go SDK
         run: go test ./... -run Conformance
         working-directory: sdks/go
+      # -encoding UTF-8 is required, not cosmetic: the test sources carry
+      # non-ASCII literals and javac otherwise falls back to the platform
+      # default, which differs between this runner and a developer machine.
+      - name: Java SDK
+        run: |
+          javac -encoding UTF-8 -d out $(find src test -name '*.java')
+          java -cp out com.flagship.sdk.ConformanceTest
+        working-directory: sdks/java
 
       # The fixture is generated from the TypeScript reference. If regenerating
       # it produces a diff, someone changed the hash without updating the
