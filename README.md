@@ -6,6 +6,8 @@ the host application. Rulesets are pushed over SSE with monotonic versioning, bu
 deterministic and identical across languages, and the analysis engine uses always-valid
 sequential testing rather than fixed-horizon p-values you peek at.
 
+Design reasoning for the non-obvious parts is in [docs/DESIGN-DECISIONS.md](docs/DESIGN-DECISIONS.md).
+
 ## The hard parts
 
 - **In-process evaluation.** A flag is checked hundreds of times per request. It cannot
