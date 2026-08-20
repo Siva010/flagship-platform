@@ -28,10 +28,19 @@ func main() {
 	broadcastHub := hub.New(hub.Options{Shards: shards, BufferSize: bufferSize})
 	snapshotStore := store.New(broadcastHub, historySize)
 
+	// Absent rather than empty-by-default: an unset token disables publishing,
+	// so a forgotten environment variable cannot leave an unauthenticated
+	// ingress that controls what every SDK evaluates.
+	publishToken := os.Getenv("PUBLISH_TOKEN")
+	if publishToken == "" {
+		logger.Warn("PUBLISH_TOKEN is unset; the publish endpoint is disabled")
+	}
+
 	server := api.NewServer(api.Options{
-		Hub:    broadcastHub,
-		Store:  snapshotStore,
-		Logger: logger,
+		Hub:          broadcastHub,
+		Store:        snapshotStore,
+		Logger:       logger,
+		PublishToken: publishToken,
 	})
 
 	srv := &http.Server{

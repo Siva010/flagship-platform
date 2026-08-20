@@ -20,6 +20,8 @@ export interface ServerOptions {
   logger?: boolean;
   /** Where to push published rulesets. Omitted in tests. */
   dataPlaneUrl?: string | undefined;
+  /** Shared secret the data plane requires on its internal publish endpoint. */
+  dataPlaneToken?: string | undefined;
 }
 
 declare module 'fastify' {
@@ -157,7 +159,12 @@ export function buildServer(options: ServerOptions): FastifyInstance {
       try {
         const response = await fetch(`${options.dataPlaneUrl}/internal/v1/publish`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            ...(options.dataPlaneToken
+              ? { Authorization: `Bearer ${options.dataPlaneToken}` }
+              : {}),
+          },
           body: JSON.stringify({
             environment: environmentKey,
             version: published.version,
@@ -238,6 +245,7 @@ if (isEntrypoint) {
     db,
     logger: true,
     dataPlaneUrl: process.env['DATA_PLANE_URL'],
+    dataPlaneToken: process.env['PUBLISH_TOKEN'],
   });
 
   migrate(db)

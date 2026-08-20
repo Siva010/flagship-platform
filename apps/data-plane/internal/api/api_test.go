@@ -347,3 +347,130 @@ func TestStreamUnsubscribesOnClientDisconnect(t *testing.T) {
 		t.Errorf("connected = %d after disconnect, want 0", connected)
 	}
 }
+
+// --- Publish authentication ---------------------------------------------
+
+func newPublishServer(t *testing.T, token string) *httptest.Server {
+	t.Helper()
+
+	h := hub.New(hub.Options{Shards: 2, BufferSize: 8})
+	st := store.New(h, 8)
+	server := NewServer(Options{Hub: h, Store: st, PublishToken: token, KeepAlive: time.Second})
+
+	httpServer := httptest.NewServer(server.Routes())
+	t.Cleanup(func() {
+		httpServer.Close()
+		h.CloseAll()
+	})
+	return httpServer
+}
+
+func postPublish(t *testing.T, server *httptest.Server, token string) *http.Response {
+	t.Helper()
+
+	body := strings.NewReader(`{"environment":"production","version":1,"payload":{"flags":[]}}`)
+	request, err := http.NewRequest(http.MethodPost, server.URL+"/internal/v1/publish", body)
+	if err != nil {
+		t.Fatalf("build request: %v", err)
+	}
+	request.Header.Set("Content-Type", "application/json")
+	if token != "" {
+		request.Header.Set("Authorization", "Bearer "+token)
+	}
+
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatalf("publish: %v", err)
+	}
+	return response
+}
+
+// TestPublishDisabledWithoutToken is the fail-closed case. A missing
+// environment variable must disable the endpoint, never leave it open --
+// anyone who can publish controls what every connected SDK evaluates.
+func TestPublishDisabledWithoutToken(t *testing.T) {
+	server := newPublishServer(t, "")
+
+	response := postPublish(t, server, "")
+	defer response.Body.Close()
+
+	if response.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503 when no token is configured", response.StatusCode)
+	}
+}
+
+// A token presented against a server with none configured must still fail:
+// "no token configured" cannot be satisfied by guessing.
+func TestPublishDisabledIgnoresPresentedToken(t *testing.T) {
+	server := newPublishServer(t, "")
+
+	response := postPublish(t, server, "anything")
+	defer response.Body.Close()
+
+	if response.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", response.StatusCode)
+	}
+}
+
+func TestPublishRequiresBearerToken(t *testing.T) {
+	server := newPublishServer(t, "secret-token")
+
+	response := postPublish(t, server, "")
+	defer response.Body.Close()
+
+	if response.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401 without a token", response.StatusCode)
+	}
+}
+
+func TestPublishRejectsWrongToken(t *testing.T) {
+	server := newPublishServer(t, "secret-token")
+
+	for _, wrong := range []string{"wrong", "secret-toke", "secret-tokenX", ""} {
+		response := postPublish(t, server, wrong)
+		response.Body.Close()
+		if wrong == "" {
+			continue // covered above
+		}
+		if response.StatusCode != http.StatusUnauthorized {
+			t.Errorf("token %q: status = %d, want 401", wrong, response.StatusCode)
+		}
+	}
+}
+
+func TestPublishAcceptsCorrectToken(t *testing.T) {
+	server := newPublishServer(t, "secret-token")
+
+	response := postPublish(t, server, "secret-token")
+	defer response.Body.Close()
+
+	if response.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(response.Body)
+		t.Fatalf("status = %d, want 200; body=%s", response.StatusCode, body)
+	}
+}
+
+// An authenticated publish must still reach subscribers, so authentication was
+// added in front of the path rather than across it.
+func TestAuthenticatedPublishStillBroadcasts(t *testing.T) {
+	h := hub.New(hub.Options{Shards: 2, BufferSize: 8})
+	st := store.New(h, 8)
+	server := NewServer(Options{Hub: h, Store: st, PublishToken: "secret-token"})
+	httpServer := httptest.NewServer(server.Routes())
+	defer httpServer.Close()
+	defer h.CloseAll()
+
+	subscriber := h.Subscribe("sub", "production")
+
+	response := postPublish(t, httpServer, "secret-token")
+	response.Body.Close()
+
+	select {
+	case message := <-subscriber.Messages():
+		if message.Version != 1 {
+			t.Errorf("version = %d, want 1", message.Version)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("subscriber received nothing after an authorized publish")
+	}
+}

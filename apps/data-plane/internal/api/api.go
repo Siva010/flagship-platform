@@ -3,12 +3,14 @@ package api
 
 import (
 	"bytes"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/flagship/data-plane/internal/hub"
@@ -26,6 +28,10 @@ type Server struct {
 	// without the client having to reconnect.
 	keepAlive time.Duration
 
+	// publishToken authenticates the control plane. Empty disables the publish
+	// endpoint entirely rather than leaving it open.
+	publishToken string
+
 	nextSubscriberID func() string
 }
 
@@ -35,6 +41,9 @@ type Options struct {
 	Store     *store.Store
 	Logger    *slog.Logger
 	KeepAlive time.Duration
+	// PublishToken is the shared secret the control plane presents. Leaving it
+	// empty disables publishing; it never means "allow anyone".
+	PublishToken string
 }
 
 // NewServer creates a Server.
@@ -50,10 +59,11 @@ func NewServer(options Options) *Server {
 
 	var counter uint64
 	return &Server{
-		hub:       options.Hub,
-		store:     options.Store,
-		logger:    logger,
-		keepAlive: keepAlive,
+		hub:          options.Hub,
+		store:        options.Store,
+		logger:       logger,
+		keepAlive:    keepAlive,
+		publishToken: options.PublishToken,
 		nextSubscriberID: func() string {
 			counter++
 			return fmt.Sprintf("sub-%d-%d", time.Now().UnixNano(), counter)
@@ -81,12 +91,22 @@ type PublishRequest struct {
 
 // handlePublish accepts a new ruleset from the control plane.
 //
-// This path is internal: it must never be reachable from the public internet,
-// since anyone who can call it can change what every SDK evaluates. The spec
-// puts gRPC between the planes; this HTTP endpoint is the interim shape and
-// still needs network-level isolation plus service authentication before it is
-// exposed anywhere real.
+// Anyone who can call this controls what every connected SDK evaluates, which
+// makes it the highest-value target in the system. Two protections apply:
+//
+//   - A shared service token, compared in constant time.
+//   - Fail closed. With no token configured the endpoint is disabled outright
+//     rather than left open, so a missing environment variable cannot silently
+//     publish an unauthenticated ingress.
+//
+// Network-level isolation is still required on top of this; a shared secret is
+// not a substitute for the endpoint being unreachable from the internet. The
+// spec puts gRPC with mTLS between the planes, which is the intended end state.
 func (s *Server) handlePublish(w http.ResponseWriter, r *http.Request) {
+	if !s.authorizePublish(w, r) {
+		return
+	}
+
 	var request PublishRequest
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON body")
@@ -129,6 +149,36 @@ func (s *Server) handlePublish(w http.ResponseWriter, r *http.Request) {
 		"version":     snapshot.Version,
 		"etag":        snapshot.ETag,
 	})
+}
+
+// authorizePublish reports whether the request may publish, writing the failure
+// response itself when it may not.
+func (s *Server) authorizePublish(w http.ResponseWriter, r *http.Request) bool {
+	if s.publishToken == "" {
+		s.logger.Error("publish attempted with no service token configured; endpoint is disabled")
+		writeError(w, http.StatusServiceUnavailable,
+			"publish endpoint disabled: set PUBLISH_TOKEN to enable it")
+		return false
+	}
+
+	const prefix = "Bearer "
+	header := r.Header.Get("Authorization")
+	if !strings.HasPrefix(header, prefix) {
+		writeError(w, http.StatusUnauthorized, "missing bearer token")
+		return false
+	}
+
+	// Constant time: a byte-wise comparison that returns early leaks the token
+	// one character at a time to anyone who can measure response latency.
+	presented := []byte(strings.TrimPrefix(header, prefix))
+	expected := []byte(s.publishToken)
+	if subtle.ConstantTimeCompare(presented, expected) != 1 {
+		s.logger.Warn("publish rejected: invalid service token", "remote", r.RemoteAddr)
+		writeError(w, http.StatusUnauthorized, "invalid token")
+		return false
+	}
+
+	return true
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
