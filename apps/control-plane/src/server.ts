@@ -1,6 +1,8 @@
 import { pathToFileURL } from 'node:url';
 import Fastify, { type FastifyInstance, type FastifyRequest } from 'fastify';
+import { ClickHouseClient, migrateClickHouse } from './clickhouse.ts';
 import { createPool, migrate, type Database } from './db.ts';
+import { ExposureWriter, MAX_BATCH_SIZE, validateBatch } from './exposures.ts';
 import { generateApiKey, type KeyKind } from './keys.ts';
 import {
   authenticateKey,
@@ -22,6 +24,12 @@ export interface ServerOptions {
   dataPlaneUrl?: string | undefined;
   /** Shared secret the data plane requires on its internal publish endpoint. */
   dataPlaneToken?: string | undefined;
+  /**
+   * Where exposure events are written. Omitted in tests that do not need
+   * ClickHouse, and when omitted the ingest endpoint reports itself unavailable
+   * rather than pretending to accept events it will silently discard.
+   */
+  exposureWriter?: ExposureWriter | undefined;
 }
 
 declare module 'fastify' {
@@ -83,6 +91,52 @@ export function buildServer(options: ServerOptions): FastifyInstance {
     }
 
     return reply.send(snapshot.payload);
+  });
+
+  /**
+   * Receives a batch of exposure events from an SDK.
+   *
+   * Answers 202 rather than 200: the events are validated and handed to the
+   * writer, but the ClickHouse insert has not completed and may still fail.
+   * Awaiting it would put ClickHouse's tail latency on the request path of
+   * every SDK flush, and the SDK cannot act on a write failure anyway — it has
+   * already discarded its copy of the batch by the time this replies.
+   */
+  app.post<{ Body: { events?: unknown } }>('/sdk/v1/exposures', async (request, reply) => {
+    const scope = await requireSdkKey(request);
+    if (scope === undefined) {
+      return reply.code(401).send({ error: 'invalid or missing SDK key' });
+    }
+
+    const writer = options.exposureWriter;
+    if (writer === undefined) {
+      return reply.code(503).send({ error: 'exposure ingest is not configured' });
+    }
+
+    const events = request.body?.events;
+    if (!Array.isArray(events)) {
+      return reply.code(400).send({ error: 'events must be an array' });
+    }
+    if (events.length > MAX_BATCH_SIZE) {
+      // Rejected whole rather than truncated, so the SDK's accounting of what
+      // was delivered cannot silently disagree with what was stored.
+      return reply
+        .code(413)
+        .send({ error: `batch exceeds ${MAX_BATCH_SIZE} events`, maxBatchSize: MAX_BATCH_SIZE });
+    }
+
+    // The scope is what stamps tenant and environment onto every row. Nothing
+    // in the body is consulted for either.
+    const { rows, rejected } = validateBatch(scope, events);
+
+    if (!writer.enqueue(rows)) {
+      // Backpressure, not an error in the request. The SDK treats this like any
+      // other failed flush and drops the batch, which is the intended outcome:
+      // shedding analytics load is how ingest stays up.
+      return reply.code(429).send({ error: 'ingest is saturated', accepted: 0 });
+    }
+
+    return reply.code(202).send({ accepted: rows.length, rejected: rejected.length });
   });
 
   // --- Admin routes -------------------------------------------------------
@@ -241,16 +295,38 @@ const isEntrypoint = entry !== undefined && import.meta.url === pathToFileURL(en
 if (isEntrypoint) {
   const port = Number(process.env['PORT'] ?? 4000);
   const db = createPool();
-  const app = buildServer({
+  const clickhouse = new ClickHouseClient();
+
+  // The writer reports failures through the app's logger and the app needs the
+  // writer at construction, so the logger is reached lazily through this
+  // binding rather than by giving the writer a logger of its own.
+  let app: FastifyInstance;
+  const exposureWriter = new ExposureWriter({
+    client: clickhouse,
+    onError: (error) => app.log.warn({ err: error }, 'exposure insert failed'),
+  });
+
+  app = buildServer({
     db,
     logger: true,
     dataPlaneUrl: process.env['DATA_PLANE_URL'],
     dataPlaneToken: process.env['PUBLISH_TOKEN'],
+    exposureWriter,
   });
 
   migrate(db)
-    .then((ran) => {
+    .then(async (ran) => {
       if (ran.length > 0) app.log.info({ migrations: ran }, 'applied migrations');
+
+      // Analytics storage being down is not a reason to refuse to serve flags.
+      // The ingest route reports it per request; flag delivery is unaffected.
+      try {
+        const statements = await migrateClickHouse(clickhouse);
+        app.log.info({ statements }, 'applied ClickHouse schema');
+      } catch (error) {
+        app.log.warn({ err: error }, 'ClickHouse schema not applied; exposure ingest will fail');
+      }
+
       return app.listen({ port, host: '0.0.0.0' });
     })
     .catch((error: unknown) => {
