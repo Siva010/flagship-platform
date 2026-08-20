@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -185,8 +186,27 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
+// handleStats reports hub counters alongside process memory.
+//
+// Memory is included because the interesting number for a connection-holding
+// service is cost per connection, and that can only be derived by sampling the
+// heap at known connection counts. ReadMemStats stops the world briefly, which
+// is acceptable on an operator endpoint and would not be on a hot path.
 func (s *Server) handleStats(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, s.hub.Stats())
+	var memory runtime.MemStats
+	runtime.ReadMemStats(&memory)
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"hub": s.hub.Stats(),
+		"runtime": map[string]any{
+			"goroutines": runtime.NumGoroutine(),
+			// HeapAlloc is live heap. Sys is what the process reserved from the
+			// OS, which lags behind and overstates steady-state cost.
+			"heapAllocBytes": memory.HeapAlloc,
+			"sysBytes":       memory.Sys,
+			"numGC":          memory.NumGC,
+		},
+	})
 }
 
 // handleSnapshot serves the current ruleset with ETag-based conditional GET.
