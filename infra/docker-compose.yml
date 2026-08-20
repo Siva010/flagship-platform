@@ -45,6 +45,13 @@ services:
       nofile:
         soft: 262144
         hard: 262144
+    healthcheck:
+      # ClickHouse binds IPv4 only; "localhost" resolves to ::1 here and is refused.
+      test: ['CMD', 'wget', '--spider', '-q', 'http://127.0.0.1:8123/ping']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 20s
 
 volumes:
   postgres-data:
