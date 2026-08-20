@@ -93,7 +93,7 @@ Both arms draw from the same distribution, so every rejection is a false positiv
 
 ## Status
 
-**Done** — 144 tests, plus the Go suite under `-race`:
+**Done** — 166 tests with all services up, plus the Go suite under `-race` and a Java conformance run:
 
 - **Deterministic bucketing** — MurmurHash3 in **TypeScript, Go, and Java**, each validated against published smhasher vectors rather than only against our own fixture, and all three gated in CI against the same 500 cases. The fixture deliberately carries multi-byte UTF-8, astral-plane characters, and every tail length, because those are what separate a correct port from one that merely agrees on ASCII.
 - **Rule evaluation** — nested AND/OR/NOT, reusable segments, flag prerequisites, percentage rollouts. Both recursive structures are cycle-guarded; a malformed ruleset fails closed instead of overflowing the stack inside a customer's request path.
@@ -103,11 +103,11 @@ Both arms draw from the same distribution, so every rejection is a false positiv
 - **SSE fan-out** — sharded registry, bounded per-connection buffers, slow-consumer eviction. 117 µs to broadcast to 1000 subscribers.
 - **Snapshot store** — monotonic versions, bounded history for `Last-Event-ID` resumption, ETag conditional GET.
 - **Control plane** — Postgres schema and migration runner, hashed API keys with indexed-prefix lookup, a ruleset compiler that rejects invalid publishes rather than shipping them, publish transaction with per-environment version locking, append-only audit log, and an SDK snapshot endpoint that picks the payload from the authenticated key kind.
-- **Exposure pipeline** — adaptive sampling, hard-bounded queues, non-blocking recording.
+- **Exposure pipeline** — SDK-side adaptive sampling and hard-bounded queues, ingesting into ClickHouse. Aggregations count `uniqExact(dedupe_key)` rather than rows, so at-least-once redelivery cannot inflate them regardless of whether a background merge has collapsed the duplicates yet.
 - **Console** — a recursive rule builder showing the server payload, client payload, and a live evaluation side by side, plus an experiment results view plotting confidence intervals over time. On its default A/A scenario the fixed-horizon interval excludes zero at 17,000 users and then returns to non-significance; the always-valid band never crosses.
 - **Publish authentication** — the data-plane ingress is gated by a service token compared in constant time, and fails closed: no token configured disables the endpoint rather than leaving it open.
 
-**Not started** — the ClickHouse exposure sink, and a console flag-list view.
+**Not started** — a console flag-list view, and a conversion-event table (exposures supply the denominator; the numerator still has to come from somewhere).
 
 Integration tests run against a real Postgres and skip cleanly when one is not reachable, so `npm test` stays green without Docker.
 
@@ -115,7 +115,7 @@ Integration tests run against a real Postgres and skip cleanly when one is not r
 
 ```bash
 npm run build          # all workspaces
-npm test               # 144 tests (15 need infra:up)
+npm test               # 166 tests (25 need infra:up; they skip cleanly without it)
 npm run conformance    # 500-case fixture, TypeScript SDK
 npm run bench          # evaluation latency
 npm run aa:simulate    # the A/A false-positive measurement
