@@ -22,19 +22,32 @@ import type {
  *  2. It never performs I/O. Everything needed is in the indexed snapshot.
  */
 
+/** A flag with its per-evaluation lookups precomputed. */
+interface CompiledFlag {
+  readonly flag: Flag;
+  readonly variations: ReadonlyMap<string, Variation>;
+}
+
 export interface EvaluationEnvironment {
-  readonly flags: ReadonlyMap<string, Flag>;
+  readonly flags: ReadonlyMap<string, CompiledFlag>;
   readonly segments: ReadonlyMap<string, Segment>;
 }
 
 /**
- * Builds the lookup maps once per snapshot, rather than scanning arrays on every
- * evaluation. This is the "compile into an evaluation tree, not an interpreted
- * JSON walk" step: index cost is paid on ruleset apply, not on the hot path.
+ * Compiles a snapshot into evaluation-ready form.
+ *
+ * Every cost that can be paid once per ruleset apply is paid here rather than
+ * per evaluation — flag lookup and variation lookup both become map hits
+ * instead of array scans. This is the difference between compiling the ruleset
+ * and interpreting the JSON on every flag check.
  */
 export function indexSnapshot(snapshot: RulesetSnapshot): EvaluationEnvironment {
-  const flags = new Map<string, Flag>();
-  for (const flag of snapshot.flags) flags.set(flag.key, flag);
+  const flags = new Map<string, CompiledFlag>();
+  for (const flag of snapshot.flags) {
+    const variations = new Map<string, Variation>();
+    for (const variation of flag.variations) variations.set(variation.key, variation);
+    flags.set(flag.key, { flag, variations });
+  }
 
   const segments = new Map<string, Segment>();
   for (const segment of snapshot.segments) segments.set(segment.key, segment);
@@ -63,35 +76,55 @@ function matchNode(
   node: RuleNode,
   context: EvaluationContext,
   env: EvaluationEnvironment,
-  seenSegments: Set<string>,
+  // Allocated lazily: most rule trees contain no segment reference at all, and
+  // allocating a Set per rule showed up clearly in the evaluation benchmark.
+  seenSegments: Set<string> | undefined,
 ): boolean {
   switch (node.kind) {
     case 'condition':
       return applyOperator(node.operator, resolveAttribute(context, node.attribute), node.values);
 
-    case 'and':
+    // Plain loops rather than every/some: the callback allocates a closure per
+    // node per evaluation, which is measurable on the hot path.
+    case 'and': {
       // Vacuous truth: an empty AND matches, matching boolean-algebra convention.
-      return node.children.every((child) => matchNode(child, context, env, seenSegments));
+      const children = node.children;
+      for (let i = 0; i < children.length; i++) {
+        if (!matchNode(children[i]!, context, env, seenSegments)) return false;
+      }
+      return true;
+    }
 
-    case 'or':
-      return node.children.some((child) => matchNode(child, context, env, seenSegments));
+    case 'or': {
+      const children = node.children;
+      for (let i = 0; i < children.length; i++) {
+        if (matchNode(children[i]!, context, env, seenSegments)) return true;
+      }
+      return false;
+    }
 
-    case 'not':
+    case 'not': {
       // NOT negates the conjunction of its children, so a single child behaves
       // as expected and an empty NOT is false.
-      return !node.children.every((child) => matchNode(child, context, env, seenSegments));
+      const children = node.children;
+      for (let i = 0; i < children.length; i++) {
+        if (!matchNode(children[i]!, context, env, seenSegments)) return true;
+      }
+      return false;
+    }
 
     case 'segment': {
-      if (seenSegments.has(node.segmentKey)) return false; // Cycle: fail closed.
+      const seen = seenSegments ?? new Set<string>();
+      if (seen.has(node.segmentKey)) return false; // Cycle: fail closed.
       const segment = env.segments.get(node.segmentKey);
       if (segment === undefined) return false; // Unknown segment: fail closed.
 
-      seenSegments.add(node.segmentKey);
+      seen.add(node.segmentKey);
       try {
-        const matched = matchNode(segment.when, context, env, seenSegments);
+        const matched = matchNode(segment.when, context, env, seen);
         return node.negate ? !matched : matched;
       } finally {
-        seenSegments.delete(node.segmentKey);
+        seen.delete(node.segmentKey);
       }
     }
 
@@ -103,9 +136,6 @@ function matchNode(
   }
 }
 
-function findVariation(flag: Flag, key: string): Variation | undefined {
-  return flag.variations.find((variation) => variation.key === key);
-}
 
 /** The value used for bucketing. Absent means the flag cannot roll out to this context. */
 function resolveBucketKey(flag: Flag, context: EvaluationContext): string | undefined {
@@ -115,13 +145,13 @@ function resolveBucketKey(flag: Flag, context: EvaluationContext): string | unde
 }
 
 function resultFor<T>(
-  flag: Flag,
+  compiled: CompiledFlag,
   variationKey: string,
   reason: EvaluationResult<T>['reason'],
   fallback: T,
   bucket?: number,
 ): EvaluationResult<T> {
-  const variation = findVariation(flag, variationKey);
+  const variation = compiled.variations.get(variationKey);
   if (variation === undefined) {
     return {
       value: fallback,
@@ -147,8 +177,8 @@ function evaluateInternal<T>(
   fallback: T,
   seenFlags: Set<string>,
 ): EvaluationResult<T> {
-  const flag = env.flags.get(flagKey);
-  if (flag === undefined) {
+  const compiled = env.flags.get(flagKey);
+  if (compiled === undefined) {
     return {
       value: fallback,
       variationKey: '',
@@ -164,11 +194,12 @@ function evaluateInternal<T>(
     };
   }
   seenFlags.add(flagKey);
+  const flag = compiled.flag;
 
   try {
     // A disabled flag short-circuits everything, including prerequisites.
     if (!flag.enabled) {
-      return resultFor(flag, flag.offVariationKey, { kind: 'off' }, fallback);
+      return resultFor(compiled, flag.offVariationKey, { kind: 'off' }, fallback);
     }
 
     // Prerequisites: this flag only evaluates if each required flag currently
@@ -183,7 +214,7 @@ function evaluateInternal<T>(
       );
       if (upstream.variationKey !== prerequisite.variationKey) {
         return resultFor(
-          flag,
+          compiled,
           flag.offVariationKey,
           { kind: 'prerequisiteFailed', flagKey: prerequisite.flagKey },
           fallback,
@@ -193,10 +224,10 @@ function evaluateInternal<T>(
 
     // Targeting rules, in declaration order. First match wins.
     for (const rule of flag.rules) {
-      if (!matchNode(rule.when, context, env, new Set())) continue;
+      if (!matchNode(rule.when, context, env, undefined)) continue;
 
       if ('variationKey' in rule.serve) {
-        return resultFor(flag, rule.serve.variationKey, { kind: 'ruleMatch', ruleId: rule.id }, fallback);
+        return resultFor(compiled, rule.serve.variationKey, { kind: 'ruleMatch', ruleId: rule.id }, fallback);
       }
 
       const bucketKey = resolveBucketKey(flag, context);
@@ -215,10 +246,10 @@ function evaluateInternal<T>(
           reason: { kind: 'error', message: `malformed rollout in rule "${rule.id}"` },
         };
       }
-      return resultFor(flag, variationKey, { kind: 'ruleMatch', ruleId: rule.id }, fallback, bucket);
+      return resultFor(compiled, variationKey, { kind: 'ruleMatch', ruleId: rule.id }, fallback, bucket);
     }
 
-    return resultFor(flag, flag.defaultVariationKey, { kind: 'default' }, fallback);
+    return resultFor(compiled, flag.defaultVariationKey, { kind: 'default' }, fallback);
   } finally {
     seenFlags.delete(flagKey);
   }

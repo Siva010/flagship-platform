@@ -16,9 +16,15 @@ function rotl32(x: number, r: number): number {
   return ((x << r) | (x >>> (32 - r))) >>> 0;
 }
 
-/** Hashes raw bytes. Callers hash the UTF-8 encoding of a string, never UTF-16 code units. */
-export function murmurHash3x86_32(data: Uint8Array, seed = 0): number {
-  const len = data.length;
+/**
+ * Hashes raw bytes. Callers hash the UTF-8 encoding of a string, never UTF-16
+ * code units.
+ *
+ * `byteLength` lets callers hash a prefix of a larger buffer, which is what
+ * makes the allocation-free string path below possible.
+ */
+export function murmurHash3x86_32(data: Uint8Array, seed = 0, byteLength?: number): number {
+  const len = byteLength ?? data.length;
   const nblocks = len >>> 2;
   let h1 = seed >>> 0;
 
@@ -69,7 +75,29 @@ export function murmurHash3x86_32(data: Uint8Array, seed = 0): number {
 
 const encoder = new TextEncoder();
 
-/** Convenience wrapper that hashes a string's UTF-8 bytes. */
+/**
+ * Reusable encoding buffer.
+ *
+ * `TextEncoder.encode` allocates a fresh Uint8Array on every call, which
+ * dominated the evaluation benchmark — the hash itself is cheap, the allocation
+ * was not. `encodeInto` writes into this buffer instead, making the hot path
+ * allocation-free.
+ *
+ * Safe to share because evaluation is synchronous and JavaScript is
+ * single-threaded per isolate: no evaluation can interleave with another and
+ * observe a partially written buffer.
+ */
+let scratch = new Uint8Array(512);
+
+/** UTF-8 needs at most 3 bytes per UTF-16 code unit (a surrogate pair is 2 units, 4 bytes). */
+const MAX_BYTES_PER_CODE_UNIT = 3;
+
+/** Convenience wrapper that hashes a string's UTF-8 bytes without allocating. */
 export function murmurHash3x86_32String(input: string, seed = 0): number {
-  return murmurHash3x86_32(encoder.encode(input), seed);
+  const upperBound = input.length * MAX_BYTES_PER_CODE_UNIT;
+  if (scratch.length < upperBound) {
+    scratch = new Uint8Array(Math.max(upperBound, scratch.length * 2));
+  }
+  const { written } = encoder.encodeInto(input, scratch);
+  return murmurHash3x86_32(scratch, seed, written);
 }

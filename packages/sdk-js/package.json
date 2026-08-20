@@ -17,7 +17,8 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node --test --experimental-strip-types \"src/**/*.test.ts\"",
-    "conformance": "node --experimental-strip-types scripts/conformance.ts"
+    "conformance": "node --experimental-strip-types scripts/conformance.ts",
+    "bench": "node --experimental-strip-types scripts/bench.ts"
   },
   "dependencies": {
     "@flagship/core": "*"
