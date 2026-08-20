@@ -66,6 +66,46 @@ npm run infra:up
 npm run build
 ```
 
+## Measured results
+
+Reproduce either of these yourself; both are deterministic.
+
+**Evaluation latency** (`npm run bench`) — node 24.17, win32 x64, 200 flags × 5 rules, 2M iterations, in-process, no network I/O:
+
+| Path | ns/op |
+|---|---|
+| miss all rules → default | 241 |
+| match rule + rollout | 716 |
+| `isEnabled` | 712 |
+| varying flag key across 200 flags | 827 |
+
+The first benchmark read ~2000 ns/op. Three hot-path allocations were responsible — `TextEncoder.encode` allocating per hash, a `Set` allocated per rule for cycle detection, and a linear `variations.find()` with a closure per evaluation. None of it was the hash.
+
+**The peeking problem** (`npm run aa:simulate`) — 1000 simulated A/A experiments, 20k users/arm, 10% baseline, α=0.05, checked every 500 users:
+
+| Strategy | False positive rate |
+|---|---|
+| Fixed horizon, one look at the end | 5.1% (nominal 5%) |
+| Fixed horizon, peeking continuously | **27.4%** |
+| mSPRT, peeking continuously | **1.0%** |
+
+Both arms draw from the same distribution, so every rejection is a false positive. The middle row is what most teams actually do.
+
 ## Status
 
-Scaffold. Nothing below the type contracts is implemented yet.
+Core is implemented and tested; the distributed system around it is not.
+
+**Done** — deterministic bucketing with cross-language conformance (500 cases, TypeScript + Go), the rule evaluation engine, in-process SDK evaluation, payload filtering by key type, and the statistics engine.
+
+**Not started** — SSE streaming and the data-plane fan-out, exposure event ingest, the control-plane API and Postgres schema, the console UI, and the Java SDK.
+
+## Commands
+
+```bash
+npm run build          # all workspaces
+npm test               # 92 tests
+npm run conformance    # 500-case cross-language fixture
+npm run bench          # evaluation latency
+npm run aa:simulate    # the A/A false-positive measurement
+npm run infra:up       # Postgres, Redis, ClickHouse
+```
