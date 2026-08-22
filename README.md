@@ -53,7 +53,7 @@ generator's, not the server's — those are recorded alongside it rather than om
 
 ```
 apps/
-  console/         Next.js App Router console
+  console/         Next.js admin dashboard — flags, rules, experiments, audit
   control-plane/   Fastify + TypeScript — admin CRUD, auth, audit, rule validation
   data-plane/      Go — snapshot serving and SSE fan-out
 packages/
@@ -63,7 +63,7 @@ sdks/
   go/              Go SDK
   java/            Java SDK
 spec/              Normative bucketing spec + cross-language conformance fixtures
-infra/             Local Postgres, Redis, ClickHouse
+infra/             Dev datastores, plus a full containerized stack
 ```
 
 The control/data split is deliberate: the control plane is low-traffic and
@@ -86,6 +86,12 @@ npm run infra:up
 
 ```bash
 npm run build
+```
+
+Or run every service in containers — see [DEPLOY.md](DEPLOY.md) for the environment it needs:
+
+```bash
+docker compose -f infra/docker-compose.prod.yml up -d
 ```
 
 ## Measured results
@@ -127,7 +133,7 @@ Heap per connection came out at 18,184 / 18,105 / 18,178 bytes at 500 / 2,000 / 
 
 ## Status
 
-**Done** — 166 tests with all services up, plus the Go suite under `-race` and a Java conformance run:
+**Done** — 202 tests with all services up, plus the Go suite under `-race` and a Java conformance run. Every service is containerized and the stack runs end to end from `infra/docker-compose.prod.yml`.
 
 - **Deterministic bucketing** — MurmurHash3 in **TypeScript, Go, and Java**, each validated against published smhasher vectors rather than only against our own fixture, and all three gated in CI against the same 500 cases. The fixture deliberately carries multi-byte UTF-8, astral-plane characters, and every tail length, because those are what separate a correct port from one that merely agrees on ASCII.
 - **Rule evaluation** — nested AND/OR/NOT, reusable segments, flag prerequisites, percentage rollouts. Both recursive structures are cycle-guarded; a malformed ruleset fails closed instead of overflowing the stack inside a customer's request path.
@@ -138,10 +144,10 @@ Heap per connection came out at 18,184 / 18,105 / 18,178 bytes at 500 / 2,000 / 
 - **Snapshot store** — monotonic versions, bounded history for `Last-Event-ID` resumption, ETag conditional GET.
 - **Control plane** — Postgres schema and migration runner, hashed API keys with indexed-prefix lookup, a ruleset compiler that rejects invalid publishes rather than shipping them, publish transaction with per-environment version locking, append-only audit log, and an SDK snapshot endpoint that picks the payload from the authenticated key kind.
 - **Exposure pipeline** — SDK-side adaptive sampling and hard-bounded queues, ingesting into ClickHouse. Aggregations count `uniqExact(dedupe_key)` rather than rows, so at-least-once redelivery cannot inflate them regardless of whether a background merge has collapsed the duplicates yet.
-- **Console** — a recursive rule builder showing the server payload, client payload, and a live evaluation side by side, plus an experiment results view plotting confidence intervals over time. On its default A/A scenario the fixed-horizon interval excludes zero at 17,000 users and then returns to non-significance; the always-valid band never crosses.
+- **Console** — a Next.js admin dashboard wired to the control plane: flag list with optimistic toggles, a recursive rule builder bound to real data, publish, audit log, and an experiment results view plotting confidence intervals over time. Ruleset updates arrive live over SSE with the same monotonic version guard the SDKs apply, and the connection state is shown rather than hidden — a console that has silently stopped updating looks identical to one where nothing changed. The admin token never reaches the browser: every call goes through a server-side route handler.
 - **Publish authentication** — the data-plane ingress is gated by a service token compared in constant time, and fails closed: no token configured disables the endpoint rather than leaving it open.
 
-**Not started** — a console flag-list view, and a conversion-event table (exposures supply the denominator; the numerator still has to come from somewhere).
+**Not started** — a conversion-event table (exposures supply the denominator; the numerator still has to come from somewhere), and multi-node data-plane fan-out (the control plane pushes to exactly one `DATA_PLANE_URL`, so a second replica would never receive updates).
 
 Integration tests run against a real Postgres and skip cleanly when one is not reachable, so `npm test` stays green without Docker.
 
@@ -149,7 +155,7 @@ Integration tests run against a real Postgres and skip cleanly when one is not r
 
 ```bash
 npm run build          # all workspaces
-npm test               # 166 tests (25 need infra:up; they skip cleanly without it)
+npm test               # 202 tests (25 need infra:up; they skip cleanly without it)
 npm run conformance    # 500-case fixture, TypeScript SDK
 npm run bench          # evaluation latency
 npm run aa:simulate    # the A/A false-positive measurement
