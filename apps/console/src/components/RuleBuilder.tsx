@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback } from 'react';
+import { useCallback, useState } from 'react';
 import type { AttributeValue, Condition, Operator, RuleNode, Visibility } from '@flagship/core';
 import { Button } from '@/components/ui/button';
 import { Input, Select } from '@/components/ui/input';
@@ -278,7 +278,21 @@ function ConditionEditor({
 }) {
   const multiValue = node.operator === 'in' || node.operator === 'notIn';
 
+  /**
+   * The field holds what was typed; the tree holds what it parses to.
+   *
+   * Deriving the input's value from `node.values` instead looks tidier and is
+   * unusable: parsing strips the separator and any trailing space, so re-joining
+   * deletes the comma the moment it is typed and "eu, us" collapses to "euus".
+   * Keeping the raw text local lets the parse be lossy without the editing being
+   * lossy too.
+   */
+  const [draft, setDraft] = useState<string | undefined>();
+  const joined = node.values.map(String).join(multiValue ? ', ' : '');
+  const shown = draft ?? joined;
+
   const setValues = (raw: string): void => {
+    setDraft(raw);
     const values: AttributeValue[] = multiValue
       ? raw.split(',').map((part) => part.trim()).filter((part) => part !== '')
       : [raw];
@@ -296,7 +310,10 @@ function ConditionEditor({
       />
       <Select
         value={node.operator}
-        onChange={(event) => onUpdate(path, { ...node, operator: event.target.value as Operator })}
+        onChange={(event) => {
+          setDraft(undefined);
+          onUpdate(path, { ...node, operator: event.target.value as Operator });
+        }}
         aria-label="Operator"
       >
         {OPERATORS.map((operator) => (
@@ -306,7 +323,7 @@ function ConditionEditor({
         ))}
       </Select>
       <Input
-        value={node.values.map(String).join(multiValue ? ', ' : '')}
+        value={shown}
         placeholder={multiValue ? 'value, value, value' : 'value'}
         onChange={(event) => setValues(event.target.value)}
         aria-label="Value"
