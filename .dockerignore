@@ -1,0 +1,36 @@
+# Every image is built from the repository root, because the npm workspace link
+# to packages/core only resolves when the whole workspace is in the context.
+# That makes this file load-bearing rather than an optimisation: without it the
+# host's node_modules and build output are shipped into the build context and
+# then shadow the ones the build stage produces for the target platform.
+
+**/node_modules
+**/dist
+**/.next
+**/out
+**/bin
+**/*.tsbuildinfo
+
+# The data plane is developed on Windows and leaves a native binary next to its
+# sources. Copying it into a Linux build stage is pure waste.
+**/*.exe
+
+.git
+.github
+.gitignore
+.gitattributes
+
+# Never let a real .env reach a build context; the committed example is the only
+# environment file an image build has any business seeing.
+.env
+.env.*
+!.env.example
+
+**/.DS_Store
+.idea
+.vscode
+
+docs
+spec
+README.md
+DEPLOY.md

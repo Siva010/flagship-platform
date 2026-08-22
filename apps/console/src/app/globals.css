@@ -1,359 +1,87 @@
-:root {
-  --bg: #0f1115;
-  --surface: #171a21;
-  --surface-raised: #1e222b;
-  --border: #2a2f3a;
-  --text: #e6e8ec;
-  --text-dim: #9aa1ae;
-  --accent: #6ea8fe;
-  --danger: #f2777a;
-  --server: #f5a623;
-  --client: #4fc3f7;
-  --on: #4ade80;
-  --radius: 6px;
+@import 'tailwindcss';
+
+/**
+ * Design tokens.
+ *
+ * Semantic names rather than colour names: components reference `--surface` and
+ * `--danger`, never `--slate-800`. Swapping a palette then touches this block
+ * alone, and a component cannot accidentally hard-code a colour that only works
+ * in one theme.
+ */
+@theme {
+  --color-canvas: #f7f8f7;
+  --color-surface: #ffffff;
+  --color-raised: #eef0ee;
+  --color-line: #dcdfdb;
+  --color-ink: #16191a;
+  --color-muted: #616a6b;
+  --color-brand: #1f5c73;
+  --color-brand-soft: #e3eef2;
+  --color-danger: #9c3722;
+  --color-success: #2c6444;
+  --color-warning: #8a5a12;
+
+  --font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+
+  --radius-card: 0.5rem;
 }
 
-@media (prefers-color-scheme: light) {
-  :root {
-    --bg: #f7f8fa;
-    --surface: #ffffff;
-    --surface-raised: #f0f2f5;
-    --border: #d8dce3;
-    --text: #1a1d23;
-    --text-dim: #5c6470;
-    --accent: #2563eb;
+/*
+ * Dark theme.
+ *
+ * Only the tokens are redefined. The `:not([data-theme='light'])` guard means an
+ * explicit light choice beats a dark OS preference, and the separate
+ * `[data-theme='dark']` block means an explicit dark choice beats a light OS.
+ */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --color-canvas: #101314;
+    --color-surface: #171b1c;
+    --color-raised: #1f2425;
+    --color-line: #2c3334;
+    --color-ink: #e6eae9;
+    --color-muted: #97a2a2;
+    --color-brand: #74b9d4;
+    --color-brand-soft: #16303a;
+    --color-danger: #e08b74;
+    --color-success: #7cc099;
+    --color-warning: #d7a44e;
   }
 }
 
-* {
-  box-sizing: border-box;
+:root[data-theme='dark'] {
+  --color-canvas: #101314;
+  --color-surface: #171b1c;
+  --color-raised: #1f2425;
+  --color-line: #2c3334;
+  --color-ink: #e6eae9;
+  --color-muted: #97a2a2;
+  --color-brand: #74b9d4;
+  --color-brand-soft: #16303a;
+  --color-danger: #e08b74;
+  --color-success: #7cc099;
+  --color-warning: #d7a44e;
 }
 
-body {
-  margin: 0;
-  background: var(--bg);
-  color: var(--text);
-  font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
-}
+@layer base {
+  * {
+    border-color: var(--color-line);
+  }
 
-.page {
-  max-width: 1100px;
-  margin: 0 auto;
-  padding: 2rem 1.5rem 4rem;
-}
+  html {
+    color-scheme: light dark;
+  }
 
-.page__header {
-  margin-bottom: 2rem;
-}
+  body {
+    background-color: var(--color-canvas);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
 
-.page__header h1 {
-  margin: 0;
-  font-size: 1.5rem;
-  letter-spacing: -0.02em;
-}
-
-.page__subtitle {
-  margin: 0.25rem 0 0;
-  color: var(--text-dim);
-}
-
-.panel {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 1.25rem;
-  margin-bottom: 1.5rem;
-}
-
-.panel h2 {
-  margin: 0 0 1rem;
-  font-size: 0.8rem;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--text-dim);
-}
-
-/* --- Rule builder ------------------------------------------------------- */
-
-.node {
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 0.75rem;
-  margin-bottom: 0.5rem;
-}
-
-.node--boolean {
-  background: var(--surface-raised);
-}
-
-/* Nesting depth is shown by a coloured left edge rather than indentation
-   alone, so a deep tree stays readable without scrolling horizontally. */
-.node--depth-0 { border-left: 3px solid var(--accent); }
-.node--depth-1 { border-left: 3px solid #a78bfa; }
-.node--depth-2 { border-left: 3px solid #f472b6; }
-.node--depth-3 { border-left: 3px solid #fbbf24; }
-.node--depth-4 { border-left: 3px solid #34d399; }
-
-.node--condition,
-.node--segment {
-  display: flex;
-  gap: 0.5rem;
-  align-items: center;
-  flex-wrap: wrap;
-  background: var(--surface);
-}
-
-.node__header {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  margin-bottom: 0.75rem;
-}
-
-.node__count {
-  color: var(--text-dim);
-  font-size: 0.85rem;
-}
-
-.node__children {
-  padding-left: 1rem;
-  border-left: 1px dashed var(--border);
-}
-
-.node__empty {
-  color: var(--text-dim);
-  font-style: italic;
-  margin: 0.25rem 0;
-}
-
-.node__actions {
-  display: flex;
-  gap: 0.5rem;
-  margin-top: 0.5rem;
-}
-
-.node__label {
-  color: var(--text-dim);
-}
-
-input,
-select,
-textarea {
-  background: var(--bg);
-  color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 0.4rem 0.5rem;
-  font: inherit;
-}
-
-textarea {
-  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
-  width: 100%;
-  resize: vertical;
-}
-
-.input--attribute { min-width: 11rem; }
-.input--value { min-width: 12rem; flex: 1; }
-.select--operator { font-weight: 600; }
-
-.button {
-  background: var(--surface-raised);
-  color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 0.35rem 0.7rem;
-  font: inherit;
-  cursor: pointer;
-}
-
-.button:hover:not(:disabled) { border-color: var(--accent); }
-.button:disabled { opacity: 0.4; cursor: not-allowed; }
-.button--danger { color: var(--danger); }
-.button--ghost { background: transparent; }
-
-.badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.3rem;
-  border-radius: 999px;
-  padding: 0.2rem 0.6rem;
-  font-size: 0.78rem;
-  border: 1px solid transparent;
-  cursor: pointer;
-  font-family: inherit;
-}
-
-.badge--server {
-  background: color-mix(in srgb, var(--server) 18%, transparent);
-  color: var(--server);
-  border-color: color-mix(in srgb, var(--server) 40%, transparent);
-}
-
-.badge--client {
-  background: color-mix(in srgb, var(--client) 18%, transparent);
-  color: var(--client);
-  border-color: color-mix(in srgb, var(--client) 40%, transparent);
-}
-
-/* --- Evaluate ----------------------------------------------------------- */
-
-.evaluate {
-  display: flex;
-  gap: 1rem;
-  align-items: flex-start;
-  flex-wrap: wrap;
-}
-
-.field {
-  display: flex;
-  flex-direction: column;
-  gap: 0.3rem;
-}
-
-.field--grow { flex: 1; min-width: 18rem; }
-.field span { color: var(--text-dim); font-size: 0.85rem; }
-
-.results {
-  display: flex;
-  gap: 1rem;
-  margin-top: 1rem;
-  flex-wrap: wrap;
-}
-
-.result {
-  display: flex;
-  flex-direction: column;
-  gap: 0.2rem;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 0.75rem 1rem;
-  min-width: 12rem;
-}
-
-.result__label { color: var(--text-dim); font-size: 0.85rem; }
-.result__value { font-size: 1.3rem; font-weight: 700; }
-.result--on .result__value { color: var(--on); }
-.result--off .result__value { color: var(--text-dim); }
-.result__reason { color: var(--text-dim); font-size: 0.8rem; font-family: ui-monospace, monospace; }
-
-.error { color: var(--danger); }
-
-.notice {
-  margin-top: 1rem;
-  padding: 0.75rem 1rem;
-  border-left: 3px solid var(--accent);
-  background: var(--surface-raised);
-  border-radius: 0 var(--radius) var(--radius) 0;
-  color: var(--text-dim);
-}
-
-/* --- Payloads ----------------------------------------------------------- */
-
-.payloads {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(20rem, 1fr));
-  gap: 1rem;
-}
-
-.payload h3 {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  margin: 0 0 0.5rem;
-  font-size: 0.9rem;
-}
-
-.payload pre {
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 0.75rem;
-  overflow-x: auto;
-  font-size: 0.8rem;
-  margin: 0;
-  max-height: 22rem;
-}
-
-.stripped {
-  background: color-mix(in srgb, var(--server) 10%, transparent);
-  border: 1px dashed color-mix(in srgb, var(--server) 40%, transparent);
-  border-radius: var(--radius);
-  padding: 0.75rem;
-  margin: 0;
-  color: var(--text-dim);
-}
-
-/* --- Interval chart ----------------------------------------------------- */
-
-.chart {
-  margin: 0;
-}
-
-.chart svg {
-  display: block;
-  max-width: 100%;
-  overflow: visible;
-}
-
-.chart__zero {
-  stroke: var(--text-dim);
-  stroke-width: 1;
-  stroke-dasharray: 3 3;
-}
-
-.chart__tick {
-  fill: var(--text-dim);
-  font-size: 11px;
-  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
-}
-
-.chart__legend {
-  display: flex;
-  gap: 1.5rem;
-  flex-wrap: wrap;
-  margin-top: 0.75rem;
-  font-size: 0.85rem;
-  color: var(--text-dim);
-}
-
-.chart__legend-item {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-}
-
-.chart__swatch {
-  width: 0.75rem;
-  height: 0.75rem;
-  border-radius: 2px;
-  display: inline-block;
-}
-
-.chart__note {
-  color: var(--text-dim);
-  margin: 1rem 0 0;
-}
-
-.notice--warn {
-  border-left-color: var(--danger);
-}
-
-nav.tabs {
-  display: flex;
-  gap: 0.5rem;
-  margin-bottom: 1.5rem;
-}
-
-nav.tabs a {
-  color: var(--text-dim);
-  text-decoration: none;
-  padding: 0.4rem 0.8rem;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-}
-
-nav.tabs a:hover {
-  color: var(--text);
-  border-color: var(--accent);
+  :focus-visible {
+    outline: 2px solid var(--color-brand);
+    outline-offset: 2px;
+  }
 }

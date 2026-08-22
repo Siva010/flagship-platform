@@ -1,5 +1,6 @@
+import { randomUUID } from 'node:crypto';
 import type pg from 'pg';
-import type { Database } from './db.ts';
+import { withTransaction, type Database } from './db.ts';
 import { hashApiKey, keyPrefix, verifyApiKey, type KeyKind } from './keys.ts';
 import { compileRuleset, type CompiledRuleset, type FlagRow, type SegmentRow } from './ruleset.ts';
 
@@ -358,4 +359,244 @@ export async function listAudit(
     [tenantId, limit],
   );
   return result.rows;
+}
+
+// --- Admin CRUD ----------------------------------------------------------
+//
+// Everything below takes a tenantId and includes it in the WHERE clause. That
+// is the tenancy boundary; a query here without it is a cross-tenant leak.
+
+export interface TenantSummary {
+  id: string;
+  slug: string;
+  name: string;
+}
+
+export async function listTenants(db: Database): Promise<TenantSummary[]> {
+  const result = await db.query<TenantSummary>(
+    'SELECT id, slug, name FROM tenants ORDER BY slug',
+  );
+  return result.rows;
+}
+
+export interface EnvironmentSummary {
+  id: string;
+  key: string;
+  name: string;
+  version: number;
+}
+
+export async function listEnvironments(
+  db: Database,
+  tenantId: string,
+): Promise<EnvironmentSummary[]> {
+  const result = await db.query<{ id: string; key: string; name: string; version: string }>(
+    'SELECT id, key, name, version FROM environments WHERE tenant_id = $1 ORDER BY key',
+    [tenantId],
+  );
+  // Postgres BIGINT arrives as a string to avoid precision loss; versions are
+  // far below 2^53, so narrowing here is safe and spares every caller the cast.
+  return result.rows.map((row) => ({ ...row, version: Number(row.version) }));
+}
+
+export interface FlagDetail {
+  key: string;
+  description: string;
+  salt: string;
+  bucketBy: string;
+  variations: unknown;
+  enabled: boolean;
+  defaultVariationKey: string;
+  offVariationKey: string;
+  rules: unknown;
+  prerequisites: unknown;
+  updatedAt: string;
+}
+
+export async function getFlag(
+  db: Database,
+  tenantId: string,
+  environmentId: string,
+  key: string,
+): Promise<FlagDetail | undefined> {
+  const result = await db.query<{
+    key: string;
+    description: string;
+    salt: string;
+    bucket_by: string;
+    variations: unknown;
+    enabled: boolean;
+    default_variation_key: string;
+    off_variation_key: string;
+    rules: unknown;
+    prerequisites: unknown;
+    updated_at: Date;
+  }>(
+    `SELECT f.key, f.description, f.salt, f.bucket_by, f.variations,
+            COALESCE(c.enabled, false)             AS enabled,
+            COALESCE(c.default_variation_key, '')  AS default_variation_key,
+            COALESCE(c.off_variation_key, '')      AS off_variation_key,
+            COALESCE(c.rules, '[]'::jsonb)         AS rules,
+            COALESCE(c.prerequisites, '[]'::jsonb) AS prerequisites,
+            f.updated_at
+       FROM flags f
+       LEFT JOIN flag_configs c ON c.flag_id = f.id AND c.environment_id = $3
+      WHERE f.tenant_id = $1 AND f.key = $2 AND f.archived_at IS NULL`,
+    [tenantId, key, environmentId],
+  );
+
+  const row = result.rows[0];
+  if (row === undefined) return undefined;
+
+  return {
+    key: row.key,
+    description: row.description,
+    salt: row.salt,
+    bucketBy: row.bucket_by,
+    variations: row.variations,
+    enabled: row.enabled,
+    defaultVariationKey: row.default_variation_key,
+    offVariationKey: row.off_variation_key,
+    rules: row.rules,
+    prerequisites: row.prerequisites,
+    updatedAt: row.updated_at.toISOString(),
+  };
+}
+
+export interface CreateFlagInput {
+  tenantId: string;
+  key: string;
+  description: string;
+  variations: unknown[];
+  defaultVariationKey: string;
+  offVariationKey: string;
+}
+
+/**
+ * Creates a flag and a config row in every environment.
+ *
+ * New flags start disabled everywhere. A flag that appeared already-on in
+ * production because someone created it would be the worst possible default in
+ * a system whose entire purpose is controlling exposure.
+ *
+ * The salt is generated once here and never updated: changing it reshuffles
+ * every user's bucket, silently moving people between variations mid-experiment.
+ */
+export async function createFlag(db: Database, input: CreateFlagInput): Promise<void> {
+  await withTransaction(db, async (client) => {
+    const flag = await client.query<{ id: string }>(
+      `INSERT INTO flags (tenant_id, key, description, salt, variations)
+       VALUES ($1, $2, $3, $4, $5::jsonb)
+       RETURNING id`,
+      [
+        input.tenantId,
+        input.key,
+        input.description,
+        randomUUID(),
+        JSON.stringify(input.variations),
+      ],
+    );
+    const flagId = flag.rows[0]!.id;
+
+    const environments = await client.query<{ id: string }>(
+      'SELECT id FROM environments WHERE tenant_id = $1',
+      [input.tenantId],
+    );
+
+    for (const environment of environments.rows) {
+      await client.query(
+        `INSERT INTO flag_configs
+           (tenant_id, flag_id, environment_id, enabled, default_variation_key, off_variation_key)
+         VALUES ($1, $2, $3, false, $4, $5)`,
+        [
+          input.tenantId,
+          flagId,
+          environment.id,
+          input.defaultVariationKey,
+          input.offVariationKey,
+        ],
+      );
+    }
+  });
+}
+
+export interface UpdateFlagConfigInput {
+  tenantId: string;
+  environmentId: string;
+  key: string;
+  enabled?: boolean;
+  defaultVariationKey?: string;
+  offVariationKey?: string;
+  rules?: unknown;
+}
+
+/**
+ * Updates one flag's configuration in one environment, returning the previous
+ * state so the caller can write a meaningful audit entry.
+ *
+ * Returns undefined when the flag does not exist rather than creating one, so a
+ * typo in a key cannot silently produce a second flag nobody is watching.
+ */
+export async function updateFlagConfig(
+  db: Database,
+  input: UpdateFlagConfigInput,
+): Promise<{ previous: FlagDetail } | undefined> {
+  const previous = await getFlag(db, input.tenantId, input.environmentId, input.key);
+  if (previous === undefined) return undefined;
+
+  const enabled = input.enabled ?? previous.enabled;
+  const defaultVariationKey = input.defaultVariationKey ?? previous.defaultVariationKey;
+  const offVariationKey = input.offVariationKey ?? previous.offVariationKey;
+  const rules = input.rules ?? previous.rules;
+
+  await db.query(
+    `UPDATE flag_configs c
+        SET enabled = $4,
+            default_variation_key = $5,
+            off_variation_key = $6,
+            rules = $7::jsonb,
+            updated_at = now()
+       FROM flags f
+      WHERE c.flag_id = f.id
+        AND c.tenant_id = $1
+        AND c.environment_id = $2
+        AND f.key = $3`,
+    [
+      input.tenantId,
+      input.environmentId,
+      input.key,
+      enabled,
+      defaultVariationKey,
+      offVariationKey,
+      JSON.stringify(rules),
+    ],
+  );
+
+  await db.query('UPDATE flags SET updated_at = now() WHERE tenant_id = $1 AND key = $2', [
+    input.tenantId,
+    input.key,
+  ]);
+
+  return { previous };
+}
+
+export interface SegmentSummary {
+  key: string;
+  description: string;
+  ruleTree: unknown;
+}
+
+export async function listSegments(
+  db: Database,
+  tenantId: string,
+): Promise<SegmentSummary[]> {
+  const result = await db.query<{ key: string; description: string; rule_tree: unknown }>(
+    'SELECT key, description, rule_tree FROM segments WHERE tenant_id = $1 ORDER BY key',
+    [tenantId],
+  );
+  return result.rows.map((row) => ({
+    key: row.key,
+    description: row.description,
+    ruleTree: row.rule_tree,
+  }));
 }

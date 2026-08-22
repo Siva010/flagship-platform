@@ -1,0 +1,162 @@
+# A production-shaped stack: images rather than source mounts, real healthchecks,
+# secrets supplied from the environment. It is not a production deployment —
+# DEPLOY.md lists what is missing and why that matters.
+#
+#   docker compose -f infra/docker-compose.prod.yml up -d --build
+
+# Distinct from the dev stack's "flagship". Compose identifies containers,
+# networks and volumes by project name, so sharing one would make `up` here
+# adopt and reconfigure the containers the dev stack is using.
+name: flagship-prod
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: flagship
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+      POSTGRES_DB: flagship
+    # No published port, here or for the other backing stores. The dev stack
+    # already owns 5433/6379/8123 on the host, and nothing outside this network
+    # has any reason to reach the database directly. To inspect it, go through
+    # `docker compose exec` rather than opening a hole.
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U flagship']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    # Present because the stack is specified to carry it, but no service reads
+    # from it yet: the control plane keeps no cache and the data plane holds its
+    # snapshot history in memory. Left in place so the wiring exists before it
+    # is needed rather than being retrofitted under load.
+    command: ['redis-server', '--appendonly', 'yes']
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.8-alpine
+    restart: unless-stopped
+    environment:
+      CLICKHOUSE_USER: flagship
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:?CLICKHOUSE_PASSWORD must be set}
+      CLICKHOUSE_DB: flagship
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    healthcheck:
+      # ClickHouse binds IPv4 only; "localhost" resolves to ::1 here and is refused.
+      test: ['CMD', 'wget', '--spider', '-q', 'http://127.0.0.1:8123/ping']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 20s
+
+  data-plane:
+    build:
+      context: ..
+      dockerfile: apps/data-plane/Dockerfile
+    image: flagship-data-plane:local
+    restart: unless-stopped
+    environment:
+      ADDR: ':8080'
+      # Unset here would silently disable the publish endpoint rather than fail,
+      # leaving a stack whose flags never update and whose logs say so only once
+      # at startup.
+      PUBLISH_TOKEN: ${PUBLISH_TOKEN:?PUBLISH_TOKEN must be set}
+    ports:
+      - '8080:8080'
+    healthcheck:
+      test: ['CMD', 'wget', '--spider', '-q', 'http://127.0.0.1:8080/healthz']
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  control-plane:
+    build:
+      context: ..
+      dockerfile: apps/control-plane/Dockerfile
+    image: flagship-control-plane:local
+    restart: unless-stopped
+    environment:
+      PORT: '4000'
+      DATABASE_URL: postgres://flagship:${POSTGRES_PASSWORD}@postgres:5432/flagship
+      CLICKHOUSE_URL: http://clickhouse:8123
+      CLICKHOUSE_USER: flagship
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
+      CLICKHOUSE_DATABASE: flagship
+      ADMIN_TOKEN: ${ADMIN_TOKEN:?ADMIN_TOKEN must be set}
+      # Exactly one address, which is the whole shape of the fan-out: a publish
+      # reaches this data plane and no other. See DEPLOY.md before adding replicas.
+      DATA_PLANE_URL: http://data-plane:8080
+      PUBLISH_TOKEN: ${PUBLISH_TOKEN}
+    ports:
+      - '4000:4000'
+    depends_on:
+      postgres:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+      data-plane:
+        condition: service_healthy
+    healthcheck:
+      test: ['CMD', 'wget', '--spider', '-q', 'http://127.0.0.1:4000/healthz']
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      # Postgres migrations run before the listener opens, so the first probes
+      # would otherwise fail against a process that is working correctly.
+      start_period: 20s
+
+  console:
+    build:
+      context: ..
+      dockerfile: apps/console/Dockerfile
+    image: flagship-console:local
+    restart: unless-stopped
+    environment:
+      PORT: '3000'
+      HOSTNAME: 0.0.0.0
+      # Server-side only. Anything the browser needs must be a NEXT_PUBLIC_
+      # variable, and those are inlined when the image is built — setting one
+      # here would have no effect at all.
+      CONTROL_PLANE_URL: http://control-plane:4000
+      DATA_PLANE_URL: http://data-plane:8080
+      # The console's route handlers call the control plane on the browser's
+      # behalf so this token never leaves the server. Shipping it to the client
+      # would put write access to every flag in every environment behind a
+      # devtools inspection.
+      ADMIN_TOKEN: ${ADMIN_TOKEN:?ADMIN_TOKEN is required}
+    ports:
+      - '3000:3000'
+    depends_on:
+      control-plane:
+        condition: service_healthy
+    healthcheck:
+      # The console has no /healthz route, so this probes the root page instead.
+      # That is a heavier check than the other two — it renders — but it is the
+      # only endpoint the app actually serves.
+      test: ['CMD', 'wget', '--spider', '-q', 'http://127.0.0.1:3000/']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+volumes:
+  postgres-data:
+  redis-data:
+  clickhouse-data:

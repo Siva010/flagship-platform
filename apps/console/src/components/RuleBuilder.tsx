@@ -2,19 +2,21 @@
 
 import { useCallback } from 'react';
 import type { AttributeValue, Condition, Operator, RuleNode, Visibility } from '@flagship/core';
+import { Button } from '@/components/ui/button';
+import { Input, Select } from '@/components/ui/input';
+import { cn } from '@/lib/utils';
 
 /**
  * Recursive rule tree editor.
  *
  * The component tree mirrors the rule tree exactly: a boolean node renders its
- * children by rendering itself. That keeps the editor structurally incapable of
- * producing a shape the evaluator cannot read — there is no separate "UI model"
- * to drift out of sync with the wire format.
+ * children by rendering itself. That makes the editor structurally incapable of
+ * producing a shape the evaluator cannot read — there is no separate UI model to
+ * drift out of sync with the wire format.
  *
- * Edits are immutable and path-based. Each node knows its own path from the
- * root, and mutating means rebuilding the spine down to that path. Mutating in
- * place would work until two nodes shared a reference, at which point editing
- * one would silently edit the other.
+ * Edits are immutable and path-based. Each node knows its path from the root and
+ * an edit rebuilds the spine down to it. Mutating in place works until two nodes
+ * share a reference, at which point editing one silently edits the other.
  */
 
 const OPERATORS: { value: Operator; label: string }[] = [
@@ -34,13 +36,16 @@ const OPERATORS: { value: Operator; label: string }[] = [
   { value: 'semverLt', label: 'version is older than' },
 ];
 
-export type Path = number[];
+/** Depth is shown by a coloured edge so a deep tree stays readable without deep indentation. */
+const DEPTH_EDGE = [
+  'border-l-brand',
+  'border-l-[#a78bfa]',
+  'border-l-[#e879a8]',
+  'border-l-warning',
+  'border-l-success',
+];
 
-export interface RuleBuilderProps {
-  node: RuleNode;
-  onChange: (next: RuleNode) => void;
-  availableSegments?: string[];
-}
+export type Path = number[];
 
 function emptyCondition(): Condition {
   return {
@@ -48,61 +53,60 @@ function emptyCondition(): Condition {
     attribute: '',
     operator: 'eq',
     values: [''],
-    // Defaults to server: the safe direction. A rule the author forgot to
-    // classify stays out of browser bundles.
+    // Server is the safe default: a condition the author forgot to classify
+    // stays out of browser bundles.
     visibility: 'server',
   };
 }
 
-/** Replaces the node at `path`, rebuilding the spine above it. */
 function replaceAt(root: RuleNode, path: Path, next: RuleNode): RuleNode {
   if (path.length === 0) return next;
-
   const [index, ...rest] = path;
   if (root.kind !== 'and' && root.kind !== 'or' && root.kind !== 'not') return root;
-
-  const children = root.children.map((child, i) =>
-    i === index ? replaceAt(child, rest, next) : child,
-  );
-  return { ...root, children };
+  return {
+    ...root,
+    children: root.children.map((child, i) => (i === index ? replaceAt(child, rest, next) : child)),
+  };
 }
 
-/** Removes the node at `path`. */
 function removeAt(root: RuleNode, path: Path): RuleNode {
   if (path.length === 0) return root;
-
   const [index, ...rest] = path;
   if (root.kind !== 'and' && root.kind !== 'or' && root.kind !== 'not') return root;
-
   if (rest.length === 0) {
     return { ...root, children: root.children.filter((_, i) => i !== index) };
   }
-  const children = root.children.map((child, i) =>
-    i === index ? removeAt(child, rest) : child,
-  );
-  return { ...root, children };
+  return {
+    ...root,
+    children: root.children.map((child, i) => (i === index ? removeAt(child, rest) : child)),
+  };
 }
 
-export function RuleBuilder({ node, onChange, availableSegments = [] }: RuleBuilderProps) {
+export function RuleBuilder({
+  node,
+  onChange,
+  availableSegments = [],
+}: {
+  node: RuleNode;
+  onChange: (next: RuleNode) => void;
+  availableSegments?: string[];
+}) {
   const update = useCallback(
     (path: Path, next: RuleNode) => onChange(replaceAt(node, path, next)),
     [node, onChange],
   );
-
   const remove = useCallback((path: Path) => onChange(removeAt(node, path)), [node, onChange]);
 
   return (
-    <div className="rule-builder">
-      <NodeEditor
-        node={node}
-        path={[]}
-        depth={0}
-        onUpdate={update}
-        onRemove={remove}
-        availableSegments={availableSegments}
-        isRoot
-      />
-    </div>
+    <NodeEditor
+      node={node}
+      path={[]}
+      depth={0}
+      onUpdate={update}
+      onRemove={remove}
+      availableSegments={availableSegments}
+      isRoot
+    />
   );
 }
 
@@ -139,11 +143,11 @@ function NodeEditor({
 
   if (node.kind === 'segment') {
     return (
-      <div className="node node--segment">
-        <span className="node__label">
+      <div className="flex flex-wrap items-center gap-2 rounded-md border border-line bg-surface p-3">
+        <span className="text-sm text-muted">
           {node.negate ? 'is not in segment' : 'is in segment'}
         </span>
-        <select
+        <Select
           value={node.segmentKey}
           onChange={(event) => onUpdate(path, { ...node, segmentKey: event.target.value })}
           aria-label="Segment"
@@ -154,60 +158,57 @@ function NodeEditor({
               {key}
             </option>
           ))}
-        </select>
-        <button
-          type="button"
-          onClick={() => onUpdate(path, { ...node, negate: !node.negate })}
-          className="button button--ghost"
-        >
+        </Select>
+        <Button size="sm" variant="ghost" onClick={() => onUpdate(path, { ...node, negate: !node.negate })}>
           {node.negate ? 'Negated' : 'Negate'}
-        </button>
+        </Button>
         {!isRoot && (
-          <button type="button" onClick={() => onRemove(path)} className="button button--danger">
+          <Button size="sm" variant="ghost" className="text-danger" onClick={() => onRemove(path)}>
             Remove
-          </button>
+          </Button>
         )}
       </div>
     );
   }
 
-  // Boolean node: renders its children by rendering this component again.
-  const canAddChild = depth < 8;
+  const canNest = depth < 8;
 
   return (
-    <div className={`node node--boolean node--depth-${Math.min(depth, 4)}`}>
-      <div className="node__header">
-        <select
+    <div
+      className={cn(
+        'rounded-md border border-line border-l-[3px] bg-raised/40 p-3',
+        DEPTH_EDGE[Math.min(depth, DEPTH_EDGE.length - 1)],
+      )}
+    >
+      <div className="mb-3 flex flex-wrap items-center gap-3">
+        <Select
           value={node.kind}
           onChange={(event) =>
             onUpdate(path, { ...node, kind: event.target.value as 'and' | 'or' | 'not' })
           }
           aria-label="Boolean operator"
-          className="select--operator"
+          className="font-semibold"
         >
           <option value="and">ALL of</option>
           <option value="or">ANY of</option>
           <option value="not">NONE of</option>
-        </select>
-        <span className="node__count">
+        </Select>
+        <span className="text-xs text-muted">
           {node.children.length} {node.children.length === 1 ? 'condition' : 'conditions'}
         </span>
         {!isRoot && (
-          <button type="button" onClick={() => onRemove(path)} className="button button--danger">
+          <Button size="sm" variant="ghost" className="ml-auto text-danger" onClick={() => onRemove(path)}>
             Remove group
-          </button>
+          </Button>
         )}
       </div>
 
-      <div className="node__children">
+      <div className="flex flex-col gap-2 border-l border-dashed border-line pl-3">
         {node.children.length === 0 && (
-          <p className="node__empty">
-            {node.kind === 'and'
-              ? 'Empty group — matches everyone.'
-              : 'Empty group — matches no one.'}
+          <p className="text-sm italic text-muted">
+            {node.kind === 'and' ? 'Empty group — matches everyone.' : 'Empty group — matches no one.'}
           </p>
         )}
-
         {node.children.map((child, index) => (
           <NodeEditor
             // Index keys are correct here: children are positional, and a
@@ -223,21 +224,17 @@ function NodeEditor({
         ))}
       </div>
 
-      <div className="node__actions">
-        <button
-          type="button"
-          className="button"
-          onClick={() =>
-            onUpdate(path, { ...node, children: [...node.children, emptyCondition()] })
-          }
+      <div className="mt-3 flex flex-wrap gap-2">
+        <Button
+          size="sm"
+          onClick={() => onUpdate(path, { ...node, children: [...node.children, emptyCondition()] })}
         >
           + Condition
-        </button>
-        <button
-          type="button"
-          className="button"
-          disabled={!canAddChild}
-          title={canAddChild ? undefined : 'Nesting limit reached'}
+        </Button>
+        <Button
+          size="sm"
+          disabled={!canNest}
+          title={canNest ? undefined : 'Nesting limit reached'}
           onClick={() =>
             onUpdate(path, {
               ...node,
@@ -246,10 +243,9 @@ function NodeEditor({
           }
         >
           + Group
-        </button>
-        <button
-          type="button"
-          className="button"
+        </Button>
+        <Button
+          size="sm"
           onClick={() =>
             onUpdate(path, {
               ...node,
@@ -261,49 +257,46 @@ function NodeEditor({
           }
         >
           + Segment
-        </button>
+        </Button>
       </div>
     </div>
   );
 }
 
-interface ConditionEditorProps {
+function ConditionEditor({
+  node,
+  path,
+  onUpdate,
+  onRemove,
+  isRoot,
+}: {
   node: Condition;
   path: Path;
   onUpdate: (path: Path, next: RuleNode) => void;
   onRemove: (path: Path) => void;
   isRoot: boolean;
-}
-
-function ConditionEditor({ node, path, onUpdate, onRemove, isRoot }: ConditionEditorProps) {
+}) {
   const multiValue = node.operator === 'in' || node.operator === 'notIn';
 
   const setValues = (raw: string): void => {
     const values: AttributeValue[] = multiValue
-      ? raw
-          .split(',')
-          .map((part) => part.trim())
-          .filter((part) => part !== '')
+      ? raw.split(',').map((part) => part.trim()).filter((part) => part !== '')
       : [raw];
     onUpdate(path, { ...node, values });
   };
 
   return (
-    <div className="node node--condition">
-      <input
-        type="text"
+    <div className="flex flex-wrap items-center gap-2 rounded-md border border-line bg-surface p-3">
+      <Input
         value={node.attribute}
         placeholder="attribute (e.g. plan)"
         onChange={(event) => onUpdate(path, { ...node, attribute: event.target.value })}
         aria-label="Attribute"
-        className="input--attribute"
+        className="w-44"
       />
-
-      <select
+      <Select
         value={node.operator}
-        onChange={(event) =>
-          onUpdate(path, { ...node, operator: event.target.value as Operator })
-        }
+        onChange={(event) => onUpdate(path, { ...node, operator: event.target.value as Operator })}
         aria-label="Operator"
       >
         {OPERATORS.map((operator) => (
@@ -311,26 +304,28 @@ function ConditionEditor({ node, path, onUpdate, onRemove, isRoot }: ConditionEd
             {operator.label}
           </option>
         ))}
-      </select>
-
-      <input
-        type="text"
+      </Select>
+      <Input
         value={node.values.map(String).join(multiValue ? ', ' : '')}
         placeholder={multiValue ? 'value, value, value' : 'value'}
         onChange={(event) => setValues(event.target.value)}
         aria-label="Value"
-        className="input--value"
+        className="min-w-40 flex-1"
       />
-
       <VisibilityToggle
         visibility={node.visibility}
         onChange={(visibility) => onUpdate(path, { ...node, visibility })}
       />
-
       {!isRoot && (
-        <button type="button" onClick={() => onRemove(path)} className="button button--danger">
+        <Button
+          size="icon"
+          variant="ghost"
+          className="text-danger"
+          aria-label="Remove condition"
+          onClick={() => onRemove(path)}
+        >
           ×
-        </button>
+        </Button>
       )}
     </div>
   );
@@ -338,9 +333,9 @@ function ConditionEditor({ node, path, onUpdate, onRemove, isRoot }: ConditionEd
 
 /**
  * Visibility is the highest-consequence control on this screen, so it is a
- * labelled toggle rather than a dropdown option someone scrolls past. Marking a
- * condition client-visible publishes its attribute and values into every
- * browser bundle that holds a client key.
+ * labelled toggle rather than an option someone scrolls past. Marking a
+ * condition client-visible publishes its attribute and values into every browser
+ * bundle holding a client key.
  */
 function VisibilityToggle({
   visibility,
@@ -353,13 +348,18 @@ function VisibilityToggle({
   return (
     <button
       type="button"
-      className={`badge ${isServer ? 'badge--server' : 'badge--client'}`}
       onClick={() => onChange(isServer ? 'client' : 'server')}
       title={
         isServer
           ? 'Server-only: stripped from client SDK payloads. Safe for sensitive attributes.'
           : 'Client-visible: this attribute and its values ship in browser bundles.'
       }
+      className={cn(
+        'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium',
+        isServer
+          ? 'bg-warning/12 text-warning border-warning/35'
+          : 'bg-brand-soft text-brand border-brand/35',
+      )}
     >
       {isServer ? '🔒 server only' : '🌐 client visible'}
     </button>

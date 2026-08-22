@@ -8,7 +8,9 @@ import {
   sequentialProportionTest,
   twoProportionZTest,
 } from '@flagship/core';
-import { IntervalChart, type IntervalPoint, type IntervalSeries } from '../../components/IntervalChart';
+import { IntervalChart, type IntervalPoint, type IntervalSeries } from '@/components/IntervalChart';
+import { Card, CardBody, CardHeader } from '@/components/ui/card';
+import { Field, Input, Select } from '@/components/ui/input';
 
 /**
  * Experiment results.
@@ -168,51 +170,56 @@ export default function ExperimentsPage() {
     isNullExperiment && sequentialSeries.firstSignificantIndex !== undefined;
 
   return (
-    <main className="page">
-      <header className="page__header">
-        <h1>checkout-redesign</h1>
-        <p className="page__subtitle">
+    <div className="flex flex-col gap-5">
+      <div>
+        <h1 className="font-mono text-xl font-semibold tracking-tight">checkout-redesign</h1>
+        <p className="text-sm text-muted">
           Conversion rate · {usersPerArm.toLocaleString()} users per arm · α = {ALPHA}
         </p>
-      </header>
+      </div>
 
-      <section className="panel">
-        <h2>Scenario</h2>
-        <div className="evaluate">
-          <label className="field">
-            <span>True lift</span>
-            <select
-              value={trueLift}
-              onChange={(event) => setTrueLift(Number(event.target.value))}
-            >
-              <option value={0}>0% — an A/A test, no real effect</option>
-              <option value={0.02}>2% — small, below the MDE</option>
-              <option value={0.1}>10% — comfortably detectable</option>
-            </select>
-          </label>
-          <label className="field">
-            <span>Seed</span>
-            <input
-              type="number"
-              value={seed}
-              onChange={(event) => setSeed(Number(event.target.value) || 0)}
-            />
-          </label>
-        </div>
-        <p className="chart__note">
-          At {usersPerArm.toLocaleString()} users per arm this experiment can detect a{' '}
-          <strong>{(mde.relative * 100).toFixed(1)}% relative lift</strong> at 80% power.
-          Detecting 5% would need{' '}
-          {requiredSampleSize({ baselineRate, relativeEffect: 0.05 }).toLocaleString()} per arm.
-        </p>
-      </section>
+      <Card>
+        <CardHeader title="Scenario" />
+        <CardBody className="flex flex-col gap-4">
+          <div className="flex flex-wrap gap-4">
+            <Field label="True lift">
+              <Select
+                value={trueLift}
+                onChange={(event) => setTrueLift(Number(event.target.value))}
+              >
+                <option value={0}>0% — an A/A test, no real effect</option>
+                <option value={0.02}>2% — small, below the MDE</option>
+                <option value={0.1}>10% — comfortably detectable</option>
+              </Select>
+            </Field>
+            <Field label="Seed">
+              <Input
+                type="number"
+                value={seed}
+                onChange={(event) => setSeed(Number(event.target.value) || 0)}
+              />
+            </Field>
+          </div>
+          <p className="text-sm text-muted">
+            At {usersPerArm.toLocaleString()} users per arm this experiment can detect a{' '}
+            <strong className="text-ink">{(mde.relative * 100).toFixed(1)}% relative lift</strong>{' '}
+            at 80% power. Detecting 5% would need{' '}
+            {requiredSampleSize({ baselineRate, relativeEffect: 0.05 }).toLocaleString()} per arm.
+          </p>
+        </CardBody>
+      </Card>
 
-      <section className="panel">
-        <h2>Confidence interval over time</h2>
+      <Card>
+        <CardHeader title="Confidence interval over time" />
+        <CardBody>
         <IntervalChart series={[fixedSeries, sequentialSeries]} />
 
         {isNullExperiment && (
-          <div className={fixedFalsePositive ? 'notice notice--warn' : 'notice'}>
+          <div
+            className={`mt-4 rounded-md border-l-[3px] bg-raised px-4 py-3 text-sm text-muted ${
+              fixedFalsePositive ? 'border-danger' : 'border-brand'
+            }`}
+          >
             {fixedFalsePositive ? (
               <>
                 There is <strong>no real effect</strong> in this scenario, yet the
@@ -235,11 +242,13 @@ export default function ExperimentsPage() {
             )}
           </div>
         )}
-      </section>
+        </CardBody>
+      </Card>
 
-      <section className="panel">
-        <h2>Result at {final.checkpoint.n.toLocaleString()} users per arm</h2>
-        <div className="results">
+      <Card>
+        <CardHeader title={`Result at ${final.checkpoint.n.toLocaleString()} users per arm`} />
+        <CardBody>
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <Metric
             label="Observed lift"
             value={`${(final.fixed.relativeEffect * 100).toFixed(2)}%`}
@@ -269,13 +278,14 @@ export default function ExperimentsPage() {
           />
         </div>
 
-        <p className="chart__note">
+        <p className="mt-4 text-sm text-muted">
           The always-valid p-value is always the larger of the two on identical data. That
           gap is the price of being allowed to stop whenever you like — it is not a defect,
           and a method that gave you continuous monitoring for free would be wrong.
         </p>
-      </section>
-    </main>
+        </CardBody>
+      </Card>
+    </div>
   );
 }
 
@@ -291,10 +301,16 @@ function Metric({
   tone?: 'on' | 'off';
 }) {
   return (
-    <div className={`result ${tone ? `result--${tone}` : ''}`}>
-      <span className="result__label">{label}</span>
-      <span className="result__value">{value}</span>
-      <span className="result__reason">{detail}</span>
+    <div className="rounded-md border border-line px-4 py-3">
+      <p className="text-xs text-muted">{label}</p>
+      <p
+        className={`text-lg font-bold tabular-nums ${
+          tone === 'on' ? 'text-success' : tone === 'off' ? 'text-muted' : 'text-ink'
+        }`}
+      >
+        {value}
+      </p>
+      <p className="font-mono text-xs text-muted">{detail}</p>
     </div>
   );
 }

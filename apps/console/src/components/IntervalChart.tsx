@@ -69,7 +69,7 @@ export function IntervalChart({
   const formatPercent = (value: number): string => `${(value * 100).toFixed(1)}pp`;
 
   return (
-    <figure className="chart">
+    <figure className="m-0">
       <svg
         width="100%"
         viewBox={`0 0 ${width} ${height}`}
@@ -82,7 +82,7 @@ export function IntervalChart({
           x2={margin.left + plotWidth}
           y1={y(0)}
           y2={y(0)}
-          className="chart__zero"
+          className="stroke-muted [stroke-dasharray:3_3]" strokeWidth={1}
         />
 
         {series.map((s) => (
@@ -104,29 +104,29 @@ export function IntervalChart({
         ))}
 
         {/* Y axis */}
-        <text x={margin.left - 8} y={y(yMax) + 4} className="chart__tick" textAnchor="end">
+        <text x={margin.left - 8} y={y(yMax) + 4} className="fill-muted font-mono text-[11px]" textAnchor="end">
           {formatPercent(yMax)}
         </text>
-        <text x={margin.left - 8} y={y(0) + 4} className="chart__tick" textAnchor="end">
+        <text x={margin.left - 8} y={y(0) + 4} className="fill-muted font-mono text-[11px]" textAnchor="end">
           0
         </text>
-        <text x={margin.left - 8} y={y(-yMax) + 4} className="chart__tick" textAnchor="end">
+        <text x={margin.left - 8} y={y(-yMax) + 4} className="fill-muted font-mono text-[11px]" textAnchor="end">
           {formatPercent(-yMax)}
         </text>
 
         {/* X axis */}
-        <text x={margin.left} y={height - 12} className="chart__tick">
+        <text x={margin.left} y={height - 12} className="fill-muted font-mono text-[11px]">
           {minN.toLocaleString()}
         </text>
-        <text x={margin.left + plotWidth} y={height - 12} className="chart__tick" textAnchor="end">
+        <text x={margin.left + plotWidth} y={height - 12} className="fill-muted font-mono text-[11px]" textAnchor="end">
           {maxN.toLocaleString()} users/arm
         </text>
       </svg>
 
-      <figcaption className="chart__legend">
+      <figcaption className="mt-3 flex flex-wrap gap-6 text-sm text-muted">
         {series.map((s) => (
-          <span key={s.label} className="chart__legend-item">
-            <span className="chart__swatch" style={{ background: s.color }} />
+          <span key={s.label} className="flex items-center gap-1.5">
+            <span className="inline-block h-3 w-3 rounded-[2px]" style={{ background: s.color }} />
             {s.label}
             {s.firstSignificantIndex !== undefined && (
               <em>

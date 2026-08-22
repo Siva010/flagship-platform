@@ -68,6 +68,33 @@ jobs:
         run: go test ./... -race
         working-directory: sdks/go
 
+  docker:
+    name: Images (${{ matrix.service }})
+    runs-on: ubuntu-latest
+    # Independent of the node and go jobs on purpose. A Dockerfile breaks for
+    # reasons the test jobs cannot see — a missing workspace manifest, a file
+    # excluded by .dockerignore, a stage copying a path that does not exist — and
+    # gating this behind them would only delay that signal.
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [control-plane, data-plane, console]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+
+      # Build only. Pushing would need registry credentials this repository does
+      # not have, so the images are proved to build and then discarded.
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/${{ matrix.service }}/Dockerfile
+          push: false
+          # Layer cache scoped per service: one shared scope would have three
+          # unrelated builds evicting each other's layers every run.
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }}
+
   conformance:
     name: Cross-language bucketing conformance
     runs-on: ubuntu-latest

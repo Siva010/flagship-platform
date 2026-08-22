@@ -6,12 +6,18 @@ import { ExposureWriter, MAX_BATCH_SIZE, validateBatch } from './exposures.ts';
 import { generateApiKey, type KeyKind } from './keys.ts';
 import {
   authenticateKey,
+  createFlag,
+  getFlag,
   insertApiKey,
   latestSnapshot,
   listAudit,
+  listEnvironments,
   listFlags,
+  listSegments,
+  listTenants,
   publishRuleset,
   touchKeyUsage,
+  updateFlagConfig,
   writeAudit,
   type AuthenticatedKey,
 } from './repository.ts';
@@ -271,6 +277,174 @@ export function buildServer(options: ServerOptions): FastifyInstance {
 
     // The plaintext is returned exactly once and never stored.
     return reply.code(201).send({ id, key: generated.plaintext, kind, prefix: generated.prefix });
+  });
+
+  app.get('/v1/tenants', async (request, reply) => {
+    if (!requireAdmin(request)) return reply.code(401).send({ error: 'unauthorized' });
+    return reply.send({ tenants: await listTenants(db) });
+  });
+
+  app.get<{ Querystring: { tenantId: string } }>(
+    '/v1/environments',
+    async (request, reply) => {
+      if (!requireAdmin(request)) return reply.code(401).send({ error: 'unauthorized' });
+
+      const { tenantId } = request.query;
+      if (!tenantId) return reply.code(400).send({ error: 'tenantId is required' });
+
+      return reply.send({ environments: await listEnvironments(db, tenantId) });
+    },
+  );
+
+  app.get<{ Querystring: { tenantId: string } }>('/v1/segments', async (request, reply) => {
+    if (!requireAdmin(request)) return reply.code(401).send({ error: 'unauthorized' });
+
+    const { tenantId } = request.query;
+    if (!tenantId) return reply.code(400).send({ error: 'tenantId is required' });
+
+    return reply.send({ segments: await listSegments(db, tenantId) });
+  });
+
+  app.get<{ Params: { key: string }; Querystring: { tenantId: string; environmentId: string } }>(
+    '/v1/flags/:key',
+    async (request, reply) => {
+      if (!requireAdmin(request)) return reply.code(401).send({ error: 'unauthorized' });
+
+      const { tenantId, environmentId } = request.query;
+      if (!tenantId || !environmentId) {
+        return reply.code(400).send({ error: 'tenantId and environmentId are required' });
+      }
+
+      const flag = await getFlag(db, tenantId, environmentId, request.params.key);
+      if (flag === undefined) return reply.code(404).send({ error: 'flag not found' });
+
+      return reply.send(flag);
+    },
+  );
+
+  app.post<{
+    Body: {
+      tenantId: string;
+      key: string;
+      description?: string;
+      variations?: { key: string; value: unknown }[];
+      defaultVariationKey?: string;
+      offVariationKey?: string;
+    };
+  }>('/v1/flags', async (request, reply) => {
+    if (!requireAdmin(request)) return reply.code(401).send({ error: 'unauthorized' });
+
+    const body = request.body ?? ({} as Record<string, never>);
+    const { tenantId, key } = body;
+
+    if (!tenantId || !key) {
+      return reply.code(400).send({ error: 'tenantId and key are required' });
+    }
+    // Keys appear in the bucketing input unescaped, so the character set is
+    // restricted at write time rather than escaped at hash time.
+    if (!/^[a-zA-Z0-9._-]+$/.test(key)) {
+      return reply.code(400).send({ error: 'key may contain only letters, digits, . _ and -' });
+    }
+
+    const variations = body.variations ?? [
+      { key: 'on', value: true },
+      { key: 'off', value: false },
+    ];
+    const variationKeys = new Set(variations.map((variation) => variation.key));
+    const defaultVariationKey = body.defaultVariationKey ?? 'off';
+    const offVariationKey = body.offVariationKey ?? 'off';
+
+    if (!variationKeys.has(defaultVariationKey) || !variationKeys.has(offVariationKey)) {
+      return reply
+        .code(400)
+        .send({ error: 'defaultVariationKey and offVariationKey must be declared variations' });
+    }
+
+    try {
+      await createFlag(db, {
+        tenantId,
+        key,
+        description: body.description ?? '',
+        variations,
+        defaultVariationKey,
+        offVariationKey,
+      });
+    } catch (error) {
+      // 23505 is unique_violation: the flag key already exists for this tenant.
+      if ((error as { code?: string }).code === '23505') {
+        return reply.code(409).send({ error: `flag "${key}" already exists` });
+      }
+      throw error;
+    }
+
+    await writeAudit(db, {
+      tenantId,
+      actorId: 'admin',
+      actorEmail: 'admin',
+      action: 'create',
+      resourceType: 'flag',
+      resourceKey: key,
+      newValue: { variations, defaultVariationKey, offVariationKey },
+    });
+
+    return reply.code(201).send({ key });
+  });
+
+  app.patch<{
+    Params: { key: string };
+    Body: {
+      tenantId: string;
+      environmentId: string;
+      enabled?: boolean;
+      defaultVariationKey?: string;
+      offVariationKey?: string;
+      rules?: unknown;
+    };
+  }>('/v1/flags/:key', async (request, reply) => {
+    if (!requireAdmin(request)) return reply.code(401).send({ error: 'unauthorized' });
+
+    const body = request.body ?? ({} as Record<string, never>);
+    const { tenantId, environmentId } = body;
+    if (!tenantId || !environmentId) {
+      return reply.code(400).send({ error: 'tenantId and environmentId are required' });
+    }
+
+    const updated = await updateFlagConfig(db, {
+      tenantId,
+      environmentId,
+      key: request.params.key,
+      ...(body.enabled === undefined ? {} : { enabled: body.enabled }),
+      ...(body.defaultVariationKey === undefined
+        ? {}
+        : { defaultVariationKey: body.defaultVariationKey }),
+      ...(body.offVariationKey === undefined ? {} : { offVariationKey: body.offVariationKey }),
+      ...(body.rules === undefined ? {} : { rules: body.rules }),
+    });
+
+    if (updated === undefined) return reply.code(404).send({ error: 'flag not found' });
+
+    // The audit log records the previous value, not just the new one. "Who
+    // turned this on" is answerable without it; "what was it before" is not.
+    await writeAudit(db, {
+      tenantId,
+      environmentId,
+      actorId: 'admin',
+      actorEmail: 'admin',
+      action: 'update',
+      resourceType: 'flag',
+      resourceKey: request.params.key,
+      previousValue: {
+        enabled: updated.previous.enabled,
+        rules: updated.previous.rules,
+      },
+      newValue: {
+        enabled: body.enabled ?? updated.previous.enabled,
+        rules: body.rules ?? updated.previous.rules,
+      },
+    });
+
+    const flag = await getFlag(db, tenantId, environmentId, request.params.key);
+    return reply.send(flag);
   });
 
   app.get<{ Querystring: { tenantId: string; resourceKey?: string } }>(
